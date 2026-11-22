@@ -1,0 +1,78 @@
+services:
+  prod-backend:
+    container_name: business-case-prod-backend
+    image: business-case-backend:prod
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      network: host
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /data/bca.db
+      CORS_ORIGINS: '["http://192.168.0.190:8094","http://localhost:8094"]'
+    volumes:
+      - bca_prod_data:/data
+    networks:
+      - bca_prod_net
+
+  prod-frontend:
+    container_name: business-case-prod-frontend
+    image: business-case-frontend:prod
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      network: host
+    restart: unless-stopped
+    environment:
+      BACKEND_UPSTREAM: prod-backend:8000
+    ports:
+      - "${PROD_PORT:-8094}:80"
+    depends_on:
+      prod-backend:
+        condition: service_healthy
+    networks:
+      - bca_prod_net
+
+  qa-backend:
+    container_name: business-case-qa-backend
+    image: business-case-backend:qa
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      network: host
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /data/bca.db
+      CORS_ORIGINS: '["http://192.168.0.190:8095","http://localhost:8095"]'
+    volumes:
+      - bca_qa_data:/data
+    networks:
+      - bca_qa_net
+
+  qa-frontend:
+    container_name: business-case-qa-frontend
+    image: business-case-frontend:qa
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      network: host
+    restart: unless-stopped
+    environment:
+      BACKEND_UPSTREAM: qa-backend:8000
+    ports:
+      - "${QA_PORT:-8095}:80"
+    depends_on:
+      qa-backend:
+        condition: service_healthy
+    networks:
+      - bca_qa_net
+
+networks:
+  bca_prod_net:
+    driver: bridge
+  bca_qa_net:
+    driver: bridge
+
+volumes:
+  bca_prod_data:
+  bca_qa_data:
