@@ -390,3 +390,107 @@ def test_saved_llm_key_is_never_sent_to_a_different_endpoint(client: TestClient,
         json={"base_url": "http://localhost:11434/v1", "clear_api_key": True, "model": "m"},
     )
     assert cleared.status_code == 200
+
+
+def test_llm_verified_status_lifecycle_and_docs_agent_status(client: TestClient, monkeypatch) -> None:
+    # Unconfigured initially
+    s0 = client.get("/api/docs-agent/status")
+    assert s0.status_code == 200
+    assert s0.json() == {"configured": False, "verified": False, "available": False, "model": ""}
+
+    # Saved configuration alone is not verified yet
+    saved = client.put(
+        "/api/admin/llm",
+        json={"base_url": "https://api.example.com/v1", "api_key": "sk-good-0001", "model": "gpt-4o-mini"},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["configured"] is True
+    assert saved.json()["verified"] is False
+    assert client.get("/api/docs-agent/status").json()["available"] is False
+
+    should_fail = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if should_fail:
+            return httpx.Response(502, json={"error": {"message": "Upstream down"}})
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-ok",
+                "model": "gpt-4o-mini",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "pong"}, "finish_reason": "stop"}],
+            },
+        )
+
+    _install_mock_httpx(monkeypatch, handler)
+
+    # Failing test keeps verified=False
+    bad_test = client.post("/api/admin/llm/test", json={})
+    assert bad_test.status_code == 200
+    assert bad_test.json()["ok"] is False
+    assert client.get("/api/admin/llm").json()["verified"] is False
+    assert client.get("/api/docs-agent/status").json()["available"] is False
+
+    # Passing test marks matching saved config verified=True
+    should_fail = False
+    ok_test = client.post("/api/admin/llm/test", json={})
+    assert ok_test.status_code == 200
+    assert ok_test.json()["ok"] is True
+
+    llm_after = client.get("/api/admin/llm").json()
+    assert llm_after["verified"] is True
+    assert llm_after["verified_at"] is not None
+    assert client.get("/api/docs-agent/status").json() == {
+        "configured": True,
+        "verified": True,
+        "available": True,
+        "model": "gpt-4o-mini",
+    }
+
+    # Changing non-connection tuning (temperature) preserves verified=True
+    tuned = client.put(
+        "/api/admin/llm",
+        json={
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-4o-mini",
+            "temperature": 0.4,
+            "max_tokens": 1024,
+            "timeout_seconds": 45,
+            "system_prompt": "",
+        },
+    )
+    assert tuned.status_code == 200
+    assert tuned.json()["verified"] is True
+
+    # Changing model resets verified=False
+    remodel = client.put(
+        "/api/admin/llm",
+        json={"base_url": "https://api.example.com/v1", "model": "gpt-4o"},
+    )
+    assert remodel.status_code == 200
+    assert remodel.json()["verified"] is False
+    assert client.get("/api/docs-agent/status").json()["available"] is False
+
+    # Test-then-Save workflow marks newly saved config verified=True
+    pre_test = client.post(
+        "/api/admin/llm/test",
+        json={"base_url": "https://other.example/v1", "api_key": "sk-new-9999", "model": "llama3.2"},
+    )
+    assert pre_test.status_code == 200
+    assert pre_test.json()["ok"] is True
+
+    post_save = client.put(
+        "/api/admin/llm",
+        json={"base_url": "https://other.example/v1", "api_key": "sk-new-9999", "model": "llama3.2"},
+    )
+    assert post_save.status_code == 200
+    assert post_save.json()["verified"] is True
+    assert client.get("/api/docs-agent/status").json()["available"] is True
+
+    # Failing a subsequent test against saved config clears verified=False
+    should_fail = True
+    re_test_fail = client.post("/api/admin/llm/test", json={})
+    assert re_test_fail.status_code == 200
+    assert re_test_fail.json()["ok"] is False
+    assert client.get("/api/admin/llm").json()["verified"] is False
+    assert client.get("/api/docs-agent/status").json()["available"] is False

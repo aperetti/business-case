@@ -14,9 +14,10 @@ from app.core.llm_client import (
     complete_chat_upstream,
     open_chat_stream_upstream,
 )
-from app.db.repository import get_llm_settings_raw, verify_inbound_api_key
+from app.db.repository import get_llm_settings, get_llm_settings_raw, verify_inbound_api_key
 from app.models import (
     ChatMessage,
+    DocsAgentStatusOut,
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
     OpenAIModelListResponse,
@@ -166,6 +167,19 @@ async def openai_chat_completions(
     """OpenAI-compatible POST /v1/chat/completions endpoint grounded in BCA documentation."""
     _require_inbound_key(request)
     return await _handle_chat_completions(request, payload)
+
+
+@router.get("/api/docs-agent/status", response_model=DocsAgentStatusOut)
+def get_docs_agent_status(request: Request) -> DocsAgentStatusOut:
+    """Return client-safe Docs Agent availability (requires configured & verified LLM)."""
+    settings = get_llm_settings(request.app.state.db_path)
+    available = bool(settings.configured and settings.verified)
+    return DocsAgentStatusOut(
+        configured=settings.configured,
+        verified=settings.verified,
+        available=available,
+        model=settings.model if available else "",
+    )
 
 
 @router.post("/api/docs-agent/chat/completions", response_model=None)

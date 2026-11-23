@@ -33,7 +33,6 @@ import {
   IconLogout,
   IconMessageCircle,
   IconMoon,
-  IconPlayerPlay,
   IconScale,
   IconSettings,
   IconSun,
@@ -132,6 +131,7 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dbHealthy, setDbHealthy] = useState<boolean>(true);
   const [llmSettings, setLlmSettings] = useState<LLMSettingsOut | null>(null);
+  const [docsAgentAvailable, setDocsAgentAvailable] = useState(false);
 
   const [authPhase, setAuthPhase] = useState<
     'checking' | 'unauthenticated' | 'unauthorized' | 'ready'
@@ -197,16 +197,20 @@ export default function App() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [health, cat, inits, llm] = await Promise.all([
+      const [health, cat, inits, llm, docsStatus] = await Promise.all([
         api.health(),
         api.listCatalog(),
         api.listInitiatives(),
         api.getLLMSettings().catch(() => null),
+        api.getDocsAgentStatus().catch(() => null),
       ]);
       setDbHealthy(health.status === 'ok');
       setCatalog(cat);
       setInitiatives(inits);
       if (llm) setLlmSettings(llm);
+      setDocsAgentAvailable(
+        Boolean(docsStatus?.available ?? (llm?.configured && llm?.verified))
+      );
       if (inits.length > 0) {
         const firstId = inits[0].id;
         setSelectedId(firstId);
@@ -894,63 +898,29 @@ export default function App() {
               )}
             </ActionIcon>
 
-            {isMobile ? (
-              <ActionIcon
-                type="button"
-                variant="subtle"
-                color="gray"
-                size="sm"
-                aria-label="Ask Docs Agent"
-                onClick={openChatDrawer}
-              >
-                <IconMessageCircle size={16} color="var(--accent-primary)" />
-              </ActionIcon>
-            ) : (
-              <Button
-                type="button"
-                size="xs"
-                variant="default"
-                leftSection={<IconMessageCircle size={13} color="var(--accent-primary)" />}
-                onClick={openChatDrawer}
-              >
-                Ask Docs
-              </Button>
-            )}
-
-            {!adminMode && initiativeDetail && (
-              <Button
-                type="button"
-                size="xs"
-                variant="default"
-                loading={activeTab === 'compare' ? compareRunning : simRunning}
-                disabled={
-                  activeTab === 'compare'
-                    ? bcas.length < 2 || bcas[0].item_count === 0 || bcas[1].item_count === 0
-                    : initiativeDetail.items.length === 0
-                }
-                leftSection={<IconPlayerPlay size={13} color="var(--accent-primary)" />}
-                onClick={() => {
-                  if (activeTab === 'compare' && bcas.length >= 2) {
-                    handleRunComparison({
-                      bca_a_id: bcas[0].id,
-                      bca_b_id: bcas[1].id,
-                      n_simulations: 10000,
-                      seed: 42,
-                      persist: true,
-                    });
-                  } else {
-                    handleRunSimulation({
-                      bca_id: activeBcaId,
-                      n_simulations: 10000,
-                      seed: 42,
-                      persist: true,
-                    });
-                  }
-                }}
-              >
-                {isMobile ? 'MC' : 'Quick 10k MC'}
-              </Button>
-            )}
+            {docsAgentAvailable &&
+              (isMobile ? (
+                <ActionIcon
+                  type="button"
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  aria-label="Ask Docs Agent"
+                  onClick={openChatDrawer}
+                >
+                  <IconMessageCircle size={16} color="var(--accent-primary)" />
+                </ActionIcon>
+              ) : (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="default"
+                  leftSection={<IconMessageCircle size={13} color="var(--accent-primary)" />}
+                  onClick={openChatDrawer}
+                >
+                  Ask Docs
+                </Button>
+              ))}
 
             {canAccessAdmin && (
               adminMode ? (
@@ -1114,7 +1084,13 @@ export default function App() {
             activeSection={adminSection}
             onSelectSection={handleSelectAdminSection}
             llmSettings={llmSettings}
-            onSettingsUpdated={setLlmSettings}
+            onSettingsUpdated={(next) => {
+              setLlmSettings(next);
+              setDocsAgentAvailable(Boolean(next.configured && next.verified));
+              if (!(next.configured && next.verified)) {
+                closeChatDrawer();
+              }
+            }}
             onOpenDocs={() => handleOpenDoc('overview')}
             onExitAdmin={handleExitAdmin}
           />
@@ -1267,14 +1243,14 @@ export default function App() {
                 llmSettings={llmSettings}
                 activeInitiative={initiativeDetail}
                 onOpenAdmin={() => handleOpenAdmin('ai')}
-                onOpenChatDrawer={openChatDrawer}
+                onOpenChatDrawer={docsAgentAvailable ? openChatDrawer : undefined}
               />
             </Tabs.Panel>
           </Tabs>
         )}
 
         <Drawer
-          opened={chatDrawerOpen}
+          opened={chatDrawerOpen && docsAgentAvailable}
           onClose={closeChatDrawer}
           position="right"
           size={isMobile ? '100%' : 'lg'}

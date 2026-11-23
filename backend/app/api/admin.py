@@ -31,6 +31,7 @@ from app.db.repository import (
     list_api_keys,
     list_roles,
     list_users,
+    record_llm_test_result,
     update_llm_settings,
     update_role,
     update_sso_settings,
@@ -132,7 +133,15 @@ async def post_admin_llm_test(payload: LLMTestRequest, request: Request) -> LLMT
         timeout_seconds=payload.timeout_seconds,
     )
     eff_model = payload.model.strip() if payload.model is not None else str(raw.get("model") or "")
-    return await test_upstream_connection(eff_base, eff_key, eff_model, eff_timeout)
+    result = await test_upstream_connection(eff_base, eff_key, eff_model, eff_timeout)
+    record_llm_test_result(
+        request.app.state.db_path,
+        base_url=eff_base,
+        model=eff_model,
+        api_key=eff_key,
+        ok=result.ok,
+    )
+    return result
 
 
 @router.post("/llm/models", response_model=LLMModelsFetchResponse)

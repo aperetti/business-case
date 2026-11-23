@@ -465,7 +465,16 @@ export interface LLMSettingsOut {
   api_key_set: boolean;
   api_key_masked: string;
   configured: boolean;
+  verified?: boolean;
+  verified_at?: string | null;
   updated_at: string | null;
+}
+
+export interface DocsAgentStatusOut {
+  configured: boolean;
+  verified: boolean;
+  available: boolean;
+  model: string;
 }
 
 export interface LLMSettingsUpdate {

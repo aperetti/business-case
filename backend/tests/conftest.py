@@ -9,12 +9,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import ALL_AUTH_ENV_VAR_NAMES
+from app.db.repository import clear_llm_verified_cache
 from app.main import create_app
 
 
 @pytest.fixture(autouse=True)
 def _isolate_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent host process environment or local .env files from leaking into tests."""
+    clear_llm_verified_cache()
     for name in ALL_AUTH_ENV_VAR_NAMES:
         monkeypatch.delenv(name, raising=False)
 

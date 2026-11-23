@@ -296,6 +296,7 @@ export function AdminPortal({
         timeout_seconds: timeoutSec,
       });
       setTestResult(res);
+      api.getLLMSettings().then(onSettingsUpdated).catch(() => undefined);
     } catch (err) {
       setTestResult({
         ok: false,
@@ -516,11 +517,18 @@ export function AdminPortal({
               <span
                 className="status-dot"
                 style={{
-                  backgroundColor: llmSettings?.configured ? 'var(--chart-pos)' : 'var(--chart-warn)',
+                  backgroundColor:
+                    llmSettings?.configured && llmSettings?.verified
+                      ? 'var(--chart-pos)'
+                      : 'var(--chart-warn)',
                 }}
               />
               <Text size="xs" fw={600} c="var(--text-heading)">
-                {llmSettings?.configured ? `Configured (${llmSettings.model})` : 'Not Configured'}
+                {llmSettings?.configured && llmSettings?.verified
+                  ? `Verified (${llmSettings.model})`
+                  : llmSettings?.configured
+                    ? `Saved — Test Required (${llmSettings.model})`
+                    : 'Not Configured'}
               </Text>
             </Group>
           </Group>

@@ -774,7 +774,18 @@ class LLMSettingsOut(BaseModel):
     api_key_set: bool
     api_key_masked: str
     configured: bool
+    verified: bool = False
+    verified_at: str | None = None
     updated_at: str | None = None
+
+
+class DocsAgentStatusOut(BaseModel):
+    """Client-safe Docs Agent availability status (omits secrets and upstream URL)."""
+
+    configured: bool
+    verified: bool
+    available: bool
+    model: str = ""
 
 
 class LLMTestRequest(BaseModel):

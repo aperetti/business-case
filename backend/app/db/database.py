@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS llm_settings (
     max_tokens INTEGER NOT NULL DEFAULT 1024,
     timeout_seconds INTEGER NOT NULL DEFAULT 45,
     system_prompt TEXT NOT NULL DEFAULT '',
+    verified INTEGER NOT NULL DEFAULT 0,
+    verified_at TEXT,
     updated_at TEXT NOT NULL
 );
 
@@ -1120,6 +1122,12 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE initiatives ADD COLUMN cost_start_year INTEGER;")
     if "external_resource_url" not in cols:
         conn.execute("ALTER TABLE initiatives ADD COLUMN external_resource_url TEXT NOT NULL DEFAULT '';")
+
+    llm_cols = {row["name"] for row in conn.execute("PRAGMA table_info(llm_settings)").fetchall()}
+    if "verified" not in llm_cols:
+        conn.execute("ALTER TABLE llm_settings ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;")
+    if "verified_at" not in llm_cols:
+        conn.execute("ALTER TABLE llm_settings ADD COLUMN verified_at TEXT;")
 
     item_cols = {row["name"] for row in conn.execute("PRAGMA table_info(initiative_items)").fetchall()}
     if "bca_id" not in item_cols:

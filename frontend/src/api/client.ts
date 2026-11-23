@@ -13,6 +13,7 @@ import type {
   CatalogEntryCreate,
   CatalogKind,
   DocCitation,
+  DocsAgentStatusOut,
   HealthResponse,
   InitiativeCreate,
   InitiativeDetail,
@@ -328,6 +329,8 @@ export const api = {
     }),
 
   getSSOPublicConfig: () => request<SSOPublicConfigOut>('/api/auth/sso/public'),
+
+  getDocsAgentStatus: () => request<DocsAgentStatusOut>('/api/docs-agent/status'),
 
   getAuthMe: () => request<AuthMeOut>('/api/auth/me'),
 

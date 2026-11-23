@@ -7,6 +7,7 @@ import hmac
 import json
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1369,6 +1370,24 @@ def mask_secret(secret: str) -> str:
     return "••••"
 
 
+_LLM_VERIFIED_TTL_SECONDS = 900.0
+_llm_verified_fingerprints: dict[tuple[str, str, str], tuple[float, str]] = {}
+
+
+def clear_llm_verified_cache() -> None:
+    """Clear cached LLM Test Connection fingerprints (for test isolation)."""
+    _llm_verified_fingerprints.clear()
+
+
+def _llm_fingerprint(base_url: str, model: str, api_key: str) -> tuple[str, str, str]:
+    key_hash = (
+        hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()
+        if api_key.strip()
+        else ""
+    )
+    return base_url.strip().rstrip("/"), model.strip(), key_hash
+
+
 def _row_to_llm_raw(row: sqlite3.Row | None) -> dict[str, Any]:
     if row is None:
         return {
@@ -1379,8 +1398,11 @@ def _row_to_llm_raw(row: sqlite3.Row | None) -> dict[str, Any]:
             "max_tokens": 1024,
             "timeout_seconds": 45,
             "system_prompt": "",
+            "verified": False,
+            "verified_at": None,
             "updated_at": None,
         }
+    keys = set(row.keys())
     return {
         "base_url": str(row["base_url"] or ""),
         "api_key": str(row["api_key"] or ""),
@@ -1389,6 +1411,8 @@ def _row_to_llm_raw(row: sqlite3.Row | None) -> dict[str, Any]:
         "max_tokens": int(row["max_tokens"]),
         "timeout_seconds": int(row["timeout_seconds"]),
         "system_prompt": str(row["system_prompt"] or ""),
+        "verified": bool(row["verified"]) if "verified" in keys else False,
+        "verified_at": str(row["verified_at"]) if ("verified_at" in keys and row["verified_at"]) else None,
         "updated_at": str(row["updated_at"]) if row["updated_at"] else None,
     }
 
@@ -1397,6 +1421,8 @@ def _raw_to_llm_out(raw: dict[str, Any]) -> LLMSettingsOut:
     api_key = str(raw.get("api_key") or "")
     base_url = str(raw.get("base_url") or "").strip()
     model = str(raw.get("model") or "").strip()
+    configured = bool(base_url and model)
+    verified = bool(raw.get("verified")) and configured
     return LLMSettingsOut(
         base_url=base_url,
         model=model,
@@ -1406,7 +1432,9 @@ def _raw_to_llm_out(raw: dict[str, Any]) -> LLMSettingsOut:
         system_prompt=str(raw.get("system_prompt") or ""),
         api_key_set=bool(api_key),
         api_key_masked=mask_secret(api_key),
-        configured=bool(base_url and model),
+        configured=configured,
+        verified=verified,
+        verified_at=raw.get("verified_at") if verified else None,
         updated_at=raw.get("updated_at"),
     )
 
@@ -1442,11 +1470,35 @@ def update_llm_settings(db_path: Path, payload: LLMSettingsUpdate) -> LLMSetting
                     "Re-enter the API key (or clear it) when changing the Endpoint Base URL."
                 )
 
+        configured = bool(payload.base_url and payload.model)
+        connection_changed = (
+            payload.base_url.rstrip("/") != str(current.get("base_url") or "").rstrip("/")
+            or payload.model != str(current.get("model") or "")
+            or next_key != str(current.get("api_key") or "")
+        )
+
+        if not configured:
+            next_verified = False
+            next_verified_at: str | None = None
+        elif not connection_changed and bool(current.get("verified")):
+            next_verified = True
+            next_verified_at = current.get("verified_at")
+        else:
+            fp = _llm_fingerprint(payload.base_url, payload.model, next_key)
+            cached = _llm_verified_fingerprints.get(fp)
+            if cached is not None and (time.monotonic() - cached[0]) <= _LLM_VERIFIED_TTL_SECONDS:
+                next_verified = True
+                next_verified_at = cached[1]
+            else:
+                next_verified = False
+                next_verified_at = None
+
         conn.execute(
             """
             INSERT INTO llm_settings (
-                id, base_url, api_key, model, temperature, max_tokens, timeout_seconds, system_prompt, updated_at
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, base_url, api_key, model, temperature, max_tokens, timeout_seconds,
+                system_prompt, verified, verified_at, updated_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 base_url = excluded.base_url,
                 api_key = excluded.api_key,
@@ -1455,6 +1507,8 @@ def update_llm_settings(db_path: Path, payload: LLMSettingsUpdate) -> LLMSetting
                 max_tokens = excluded.max_tokens,
                 timeout_seconds = excluded.timeout_seconds,
                 system_prompt = excluded.system_prompt,
+                verified = excluded.verified,
+                verified_at = excluded.verified_at,
                 updated_at = excluded.updated_at
             """,
             (
@@ -1465,11 +1519,51 @@ def update_llm_settings(db_path: Path, payload: LLMSettingsUpdate) -> LLMSetting
                 payload.max_tokens,
                 payload.timeout_seconds,
                 payload.system_prompt.strip(),
+                int(next_verified),
+                next_verified_at,
                 now,
             ),
         )
         row = conn.execute("SELECT * FROM llm_settings WHERE id = 1").fetchone()
     return _raw_to_llm_out(_row_to_llm_raw(row))
+
+
+def record_llm_test_result(
+    db_path: Path,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    ok: bool,
+) -> None:
+    """Persist live Test Connection verification status for matching saved LLM settings."""
+    fp = _llm_fingerprint(base_url, model, api_key)
+    norm_base, norm_model, _ = fp
+    now_iso = _now_iso()
+    now_mono = time.monotonic()
+
+    if ok and norm_base and norm_model:
+        _llm_verified_fingerprints[fp] = (now_mono, now_iso)
+    else:
+        _llm_verified_fingerprints.pop(fp, None)
+
+    if not norm_base or not norm_model:
+        return
+
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT base_url, model, api_key FROM llm_settings WHERE id = 1").fetchone()
+        if row is None:
+            return
+        saved_fp = _llm_fingerprint(
+            str(row["base_url"] or ""),
+            str(row["model"] or ""),
+            str(row["api_key"] or ""),
+        )
+        if saved_fp == fp:
+            conn.execute(
+                "UPDATE llm_settings SET verified = ?, verified_at = ? WHERE id = 1",
+                (1 if ok else 0, now_iso if ok else None),
+            )
 
 
 def _mask_env_api_key(raw_key: str) -> tuple[str, str]:

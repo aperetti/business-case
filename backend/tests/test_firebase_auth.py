@@ -210,8 +210,9 @@ def test_firebase_enforced_auth_rbac_provisioning_and_exemptions(
     assert colleague_me.json()["user"]["role_id"] == "role-reviewer"
     assert colleague_me.json()["user"]["is_admin"] is False
 
-    # Reviewer can read initiatives, cannot write initiatives or access admin routes
+    # Reviewer can read initiatives & Docs Agent status, cannot write initiatives or access admin routes
     assert seeded_client.get("/api/initiatives", headers=colleague_headers).status_code == 200
+    assert seeded_client.get("/api/docs-agent/status", headers=colleague_headers).status_code == 200
     assert (
         seeded_client.post(
             "/api/initiatives",
@@ -221,6 +222,7 @@ def test_firebase_enforced_auth_rbac_provisioning_and_exemptions(
         == 403
     )
     assert seeded_client.get("/api/admin/users", headers=colleague_headers).status_code == 403
+    assert seeded_client.get("/api/admin/llm", headers=colleague_headers).status_code == 403
 
     # Disabled user immediately loses access
     disable_res = seeded_client.patch(
