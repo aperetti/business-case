@@ -54,7 +54,17 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
             return await call_next(request)
 
         sso = get_sso_settings(request.app.state.db_path)
-        if not (sso.enabled and sso.enforce_sso and sso.configured):
+        sso_active = sso.enabled and sso.configured
+        # Admin routes control SSO, users, roles, API keys, and LLM secrets. Once SSO is
+        # active they always require an authenticated admin, even when general access is
+        # not enforced; otherwise an anonymous caller could rewrite SSO settings (e.g. add
+        # their own email to admin_emails) and take over the workspace.
+        # Only Firebase ID tokens can be verified server-side today, so the admin lock
+        # applies to the Firebase provider (Entra would otherwise lock every admin out).
+        is_admin_path = sso.provider == "firebase" and (
+            path == "/api/admin" or path.startswith("/api/admin/")
+        )
+        if not (sso_active and (sso.enforce_sso or is_admin_path)):
             return await call_next(request)
 
         try:
@@ -71,8 +81,15 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
                 content={"detail": str(exc)},
             )
 
+        if user is None:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Authentication required. Please sign in."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
         req_perm = required_permission_for_request(request.method, path)
-        if req_perm and user is not None and req_perm not in user.permissions:
+        if req_perm and req_perm not in user.permissions:
             return JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": f"Missing required permission: {req_perm}"},

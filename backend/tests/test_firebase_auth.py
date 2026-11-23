@@ -250,3 +250,34 @@ def test_firebase_allowed_domains_auto_provisions_analyst(
     )
     assert created.status_code == 201
     assert seeded_client.get("/api/admin/users", headers=analyst_headers).status_code == 403
+
+
+def test_admin_routes_require_auth_when_sso_active_but_not_enforced(
+    seeded_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_key, jwks_payload = _make_rsa_keypair()
+    _install_mock_jwks(monkeypatch, jwks_payload)
+    _enable_enforced_firebase_env(monkeypatch, admin_emails="adam.peretti@gmail.com")
+    monkeypatch.setenv("SSO_ENFORCE", "false")
+
+    # General workspace stays open when SSO is optional
+    assert seeded_client.get("/api/initiatives").status_code == 200
+
+    # Admin surface is never anonymous once SSO is active
+    for method, path in (
+        ("GET", "/api/admin/sso"),
+        ("GET", "/api/admin/users"),
+        ("GET", "/api/admin/llm"),
+        ("POST", "/api/admin/api-keys"),
+    ):
+        res = seeded_client.request(method, path, json={"name": "x"})
+        assert res.status_code == 401, (method, path, res.status_code)
+
+    # Authenticated non-admin is rejected; listed admin is allowed
+    analyst = _sign_firebase_token(private_key, sub="uid-analyst", email="someone@other.org")
+    res = seeded_client.get("/api/admin/sso", headers={"Authorization": f"Bearer {analyst}"})
+    assert res.status_code in (403,)
+
+    admin = _sign_firebase_token(private_key)
+    res = seeded_client.get("/api/admin/sso", headers={"Authorization": f"Bearer {admin}"})
+    assert res.status_code == 200
