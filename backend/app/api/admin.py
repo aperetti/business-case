@@ -27,6 +27,7 @@ from app.db.repository import (
     get_sso_public_config,
     get_sso_settings,
     get_sso_settings_raw,
+    inbound_open_access_allowed,
     list_api_keys,
     list_roles,
     list_users,
@@ -394,7 +395,7 @@ def get_admin_odata_status(request: Request) -> ODataStatusOut:
         alias_path="/odata",
         metadata_path="/odata/v4/$metadata",
         odata_version="4.0",
-        auth_mode="api_key_required" if key_cnt > 0 else "open",
+        auth_mode="open" if inbound_open_access_allowed(db_path) else "api_key_required",
         inbound_key_count=key_cnt,
         entity_sets=summaries,
     )

@@ -1573,6 +1573,18 @@ def count_inbound_api_keys(db_path: Path) -> int:
     return int(row["cnt"]) if row else 0
 
 
+def inbound_open_access_allowed(db_path: Path) -> bool:
+    """Keyless /v1 and /odata access is only allowed when no keys exist AND SSO is not enforced.
+
+    With SSO enforced the web UI requires sign-in, so the BI feed and OpenAI-compatible
+    gateway (which expose the same initiative data) must not stay anonymously readable.
+    """
+    if count_inbound_api_keys(db_path) > 0:
+        return False
+    sso = get_sso_settings(db_path)
+    return not (sso.enabled and sso.enforce_sso and sso.configured)
+
+
 def verify_inbound_api_key(db_path: Path, bearer_token: str | None) -> bool:
     """Allow open access when no keys are stored; otherwise verify Bearer token against env or SHA-256 hashes."""
     env_keys = get_env_api_keys()
@@ -1590,7 +1602,7 @@ def verify_inbound_api_key(db_path: Path, bearer_token: str | None) -> bool:
     with get_connection(db_path) as conn:
         rows = conn.execute("SELECT id, key_hash FROM api_keys").fetchall()
         if not rows:
-            return True
+            return inbound_open_access_allowed(db_path)
         if not bearer_token or not bearer_token.strip():
             return False
         candidate_hash = hashlib.sha256(bearer_token.strip().encode("utf-8")).hexdigest()
