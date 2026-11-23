@@ -569,7 +569,7 @@ export function AdminPortal({
                   clearSavedKey
                     ? 'Saved key will be cleared on Save (for keyless local servers).'
                     : llmSettings?.api_key_set
-                      ? `Saved key: ${llmSettings.api_key_masked} — leave blank to keep existing key`
+                      ? `Saved key: ${llmSettings.api_key_masked} — leave blank to keep it (re-enter it if you change the Endpoint Base URL)`
                       : 'Stored securely on backend SQLite; never sent back to browser.'
                 }
                 placeholder={llmSettings?.api_key_set ? '•••••••• (unchanged)' : 'sk-...'}
