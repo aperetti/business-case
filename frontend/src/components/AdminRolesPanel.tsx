@@ -35,6 +35,7 @@ const ADMIN_PERMISSIONS: { key: PermissionKey; label: string }[] = [
   { key: 'admin:roles', label: 'Manage Roles & Permissions' },
   { key: 'admin:ai', label: 'Configure AI Provider & Gateway Keys' },
   { key: 'admin:sso', label: 'Configure Single Sign-On (Firebase / Entra)' },
+  { key: 'admin:workflows', label: 'Manage Approval Workflows & Email' },
 ];
 
 const PERM_LABEL_BY_KEY: Record<PermissionKey, string> = Object.fromEntries(

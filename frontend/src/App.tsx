@@ -54,6 +54,7 @@ import { DeterministicOverview } from './components/DeterministicOverview';
 import { DocsAgentChat } from './components/DocsAgentChat';
 import { DocsSite } from './components/DocsSite';
 import { InitiativeSettingsBar } from './components/InitiativeSettingsBar';
+import { InitiativeApprovalPanel } from './components/InitiativeApprovalPanel';
 import { InitiativeSidebar } from './components/InitiativeSidebar';
 import { LineItemDrawer } from './components/LineItemDrawer';
 import { LineItemsTable } from './components/LineItemsTable';
@@ -82,7 +83,7 @@ import type {
   SimulationRunRecord,
 } from './types/api';
 
-const ADMIN_SECTIONS: AdminSection[] = ['users', 'roles', 'sso', 'ai', 'api-keys', 'odata'];
+const ADMIN_SECTIONS: AdminSection[] = ['users', 'roles', 'sso', 'workflows', 'ai', 'api-keys', 'odata'];
 
 function parseRouteHash():
   | { mode: 'admin'; adminSection: AdminSection }
@@ -110,6 +111,15 @@ function parseRouteHash():
   }
 }
 
+/** `#initiative/<id>` deep links (used in approval emails). Returns the id once and clears the hash. */
+function consumeInitiativeHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const m = window.location.hash.match(/^#initiative\/([A-Za-z0-9-]+)$/);
+  if (!m) return null;
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  return m[1];
+}
+
 export default function App() {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
   const { setColorScheme } = useMantineColorScheme();
@@ -129,7 +139,7 @@ export default function App() {
   );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [dbHealthy, setDbHealthy] = useState<boolean>(true);
+  const [pendingApprovalIds, setPendingApprovalIds] = useState<Set<string>>(new Set());
   const [llmSettings, setLlmSettings] = useState<LLMSettingsOut | null>(null);
   const [docsAgentAvailable, setDocsAgentAvailable] = useState(false);
 
@@ -193,18 +203,26 @@ export default function App() {
     });
   }, []);
 
+  const refreshPendingApprovals = useCallback(async () => {
+    try {
+      const pending = await api.listPendingApprovals();
+      setPendingApprovalIds(new Set(pending.map((p) => p.initiative_id)));
+    } catch {
+      setPendingApprovalIds(new Set());
+    }
+  }, []);
+
   const bootstrap = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [health, cat, inits, llm, docsStatus] = await Promise.all([
+      const [, cat, inits, llm, docsStatus] = await Promise.all([
         api.health(),
         api.listCatalog(),
         api.listInitiatives(),
         api.getLLMSettings().catch(() => null),
         api.getDocsAgentStatus().catch(() => null),
       ]);
-      setDbHealthy(health.status === 'ok');
       setCatalog(cat);
       setInitiatives(inits);
       if (llm) setLlmSettings(llm);
@@ -212,19 +230,20 @@ export default function App() {
         Boolean(docsStatus?.available ?? (llm?.configured && llm?.verified))
       );
       if (inits.length > 0) {
-        const firstId = inits[0].id;
+        const linkedId = consumeInitiativeHash();
+        const firstId = inits.some((i) => i.id === linkedId) ? (linkedId as string) : inits[0].id;
         setSelectedId(firstId);
         await refreshInitiativeData(firstId);
       }
+      refreshPendingApprovals();
     } catch (err) {
-      setDbHealthy(false);
       setLoadError(
         err instanceof Error ? err.message : 'Unable to reach BCA backend API on /api.'
       );
     } finally {
       setLoading(false);
     }
-  }, [refreshInitiativeData]);
+  }, [refreshInitiativeData, refreshPendingApprovals]);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,6 +374,21 @@ export default function App() {
 
   useEffect(() => {
     const onHashChange = () => {
+      const linkedId = consumeInitiativeHash();
+      if (linkedId) {
+        setAdminMode(false);
+        setActiveTab('assumptions');
+        setSelectedId(linkedId);
+        setSelectedBcaId(null);
+        refreshInitiativeData(linkedId).catch(() => {
+          notifications.show({
+            color: 'red',
+            title: 'Initiative not found',
+            message: 'The linked initiative may have been deleted.',
+          });
+        });
+        return;
+      }
       const route = parseRouteHash();
       if (route?.mode === 'admin') {
         setAdminMode(true);
@@ -372,7 +406,7 @@ export default function App() {
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [refreshInitiativeData]);
 
   const handleOpenDoc = useCallback((slug: string) => {
     const clean = slug || 'overview';
@@ -873,16 +907,6 @@ export default function App() {
           </Group>
 
           <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-            <Group gap={6} visibleFrom="sm" wrap="nowrap" mr={4}>
-              <span
-                className="status-dot"
-                style={{ backgroundColor: dbHealthy ? 'var(--chart-pos)' : 'var(--chart-neg)' }}
-              />
-              <Text size="xs" c="var(--text-muted)">
-                {dbHealthy ? 'Ready' : 'Offline'}
-              </Text>
-            </Group>
-
             <ActionIcon
               type="button"
               variant="subtle"
@@ -1051,6 +1075,7 @@ export default function App() {
             selectedId={selectedId}
             onSelect={handleSelectInitiative}
             onCreate={handleCreateInitiative}
+            pendingApprovalIds={pendingApprovalIds}
           />
         )}
       </AppShell.Navbar>
@@ -1127,6 +1152,23 @@ export default function App() {
                 </Paper>
               ) : (
                 <Stack gap="md">
+                  <InitiativeApprovalPanel
+                    key={initiativeDetail.id}
+                    initiativeId={initiativeDetail.id}
+                    onStatusChange={async () => {
+                      const id = initiativeDetail.id;
+                      try {
+                        const [list] = await Promise.all([
+                          api.listInitiatives(),
+                          refreshInitiativeData(id, activeBcaId),
+                          refreshPendingApprovals(),
+                        ]);
+                        setInitiatives(list);
+                      } catch {
+                        /* panel already reported the action result */
+                      }
+                    }}
+                  />
                   <BCASelectorBar
                     bcas={bcas}
                     activeBcaId={activeBcaId}

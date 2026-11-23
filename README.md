@@ -21,6 +21,17 @@ A local-first Benefit-Cost Analysis (BCA) and Value Stream Modeling application 
 
 ---
 
+## Initiative Approval Workflows
+
+Initiatives move through **Draft → In Review → Approved / Rejected**. Admins define workflows in **Admin → Approval Workflows**: ordered steps, each approvable by members of selected roles and/or specific email addresses, with an optional quorum (`required approvals`). A starter "Standard Approval" workflow (Executive Reviewer or Administrator) is seeded on first run.
+
+- Submitting snapshots the workflow's steps, so later edits to a workflow never change requests already in review.
+- Initiatives, BCAs, and line items are **locked** while in review or approved (API returns `409`). Withdraw a pending request, or **Reopen as Draft** after a decision, to edit again.
+- Any rejection ends the request (a comment is required); rejected initiatives can be revised and resubmitted.
+- With Firebase SSO active, only eligible approvers can decide, and submitters cannot approve their own initiative. With SSO off the workspace is open-access, so anyone can act.
+- **Email:** configure SMTP on the same admin page. Approvers are emailed when their step starts, and the submitter when a final decision is made. Every notification (sent, failed, or skipped) appears in the page's notification log. Email links use `#initiative/<id>` deep links built from the configured App URL.
+- Managing workflows and email requires the `admin:workflows` permission (granted to Administrator).
+
 ## Running the Application
 
 ### 1. Backend (FastAPI + SQLite)

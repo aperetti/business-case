@@ -1,5 +1,15 @@
 import type {
   ApiKeyCreatedOut,
+  EmailLogOut,
+  EmailSettingsOut,
+  EmailSettingsUpdate,
+  EmailTestResponse,
+  InitiativeApprovalOut,
+  PendingApprovalOut,
+  WorkflowCreate,
+  WorkflowOut,
+  WorkflowSummaryOut,
+  WorkflowUpdate,
   ApiKeyOut,
   AuthMeOut,
   BCACompareRequest,
@@ -333,6 +343,62 @@ export const api = {
   getDocsAgentStatus: () => request<DocsAgentStatusOut>('/api/docs-agent/status'),
 
   getAuthMe: () => request<AuthMeOut>('/api/auth/me'),
+
+  // --- Approval workflows ---
+  listWorkflows: () => request<WorkflowOut[]>('/api/admin/workflows'),
+
+  createWorkflow: (payload: WorkflowCreate) =>
+    request<WorkflowOut>('/api/admin/workflows', { method: 'POST', body: JSON.stringify(payload) }),
+
+  updateWorkflow: (id: string, payload: WorkflowUpdate) =>
+    request<WorkflowOut>(`/api/admin/workflows/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteWorkflow: (id: string) =>
+    request<void>(`/api/admin/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  getEmailSettings: () => request<EmailSettingsOut>('/api/admin/email'),
+
+  updateEmailSettings: (payload: EmailSettingsUpdate) =>
+    request<EmailSettingsOut>('/api/admin/email', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  sendTestEmail: (to: string) =>
+    request<EmailTestResponse>('/api/admin/email/test', { method: 'POST', body: JSON.stringify({ to }) }),
+
+  listEmailLog: (limit = 50) => request<EmailLogOut[]>(`/api/admin/email/log?limit=${limit}`),
+
+  listActiveWorkflows: () => request<WorkflowSummaryOut[]>('/api/workflows'),
+
+  listPendingApprovals: () => request<PendingApprovalOut[]>('/api/approvals/pending'),
+
+  getInitiativeApproval: (initiativeId: string) =>
+    request<InitiativeApprovalOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/approval`),
+
+  submitForApproval: (initiativeId: string, payload: { workflow_id?: string | null; comment?: string }) =>
+    request<InitiativeApprovalOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/approval/submit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  decideApproval: (initiativeId: string, payload: { decision: 'approve' | 'reject'; comment?: string }) =>
+    request<InitiativeApprovalOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/approval/decision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  withdrawApproval: (initiativeId: string, comment = '') =>
+    request<InitiativeApprovalOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/approval/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ comment }),
+    }),
+
+  reopenInitiative: (initiativeId: string, comment = '') =>
+    request<InitiativeApprovalOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/approval/reopen`, {
+      method: 'POST',
+      body: JSON.stringify({ comment }),
+    }),
 
   listRoles: () => request<RoleOut[]>('/api/admin/roles'),
 

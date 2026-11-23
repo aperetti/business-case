@@ -1,6 +1,7 @@
 import { Button, Divider, Stack, Text } from '@mantine/core';
 import {
   IconArrowLeft,
+  IconChecklist,
   IconDatabaseExport,
   IconFingerprint,
   IconKey,
@@ -27,6 +28,10 @@ const NAV_GROUPS: {
       { id: 'roles', label: 'Roles & Permissions', icon: IconShieldLock },
       { id: 'sso', label: 'Single Sign-On', icon: IconFingerprint },
     ],
+  },
+  {
+    label: 'Governance',
+    items: [{ id: 'workflows', label: 'Approval Workflows', icon: IconChecklist }],
   },
   {
     label: 'Intelligence & Data Feeds',

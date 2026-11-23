@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { IconBellRinging, IconPlus, IconSearch } from '@tabler/icons-react';
 import { z } from 'zod';
 import type { InitiativeCreate, InitiativeSummary } from '../types/api';
 import {
@@ -26,6 +26,7 @@ import {
   isValidHttpUrl,
   zodFormValidate,
 } from '../utils/format';
+import { ApprovalStatusBadge } from './ApprovalStatusBadge';
 
 const createInitiativeSchema = z.object({
   name: z.string().trim().min(1, 'Initiative name is required').max(200),
@@ -51,11 +52,19 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreate: (payload: InitiativeCreate) => Promise<void>;
+  /** Initiatives with an approval step the current user can act on. */
+  pendingApprovalIds?: Set<string>;
 }
 
 const DEFAULT_START_YEAR = Math.min(2100, Math.max(2000, new Date().getFullYear()));
 
-export function InitiativeSidebar({ initiatives, selectedId, onSelect, onCreate }: Props) {
+export function InitiativeSidebar({
+  initiatives,
+  selectedId,
+  onSelect,
+  onCreate,
+  pendingApprovalIds,
+}: Props) {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
   const [searchText, setSearchText] = useState('');
   const [domainFilter, setDomainFilter] = useState<string>('all');
@@ -188,9 +197,22 @@ export function InitiativeSidebar({ initiatives, selectedId, onSelect, onCreate 
                   }}
                 >
                   <Stack gap={5}>
-                    <Text fw={600} size="sm" c="var(--text-heading)" lineClamp={2}>
-                      {item.name}
-                    </Text>
+                    <Group justify="space-between" align="flex-start" wrap="nowrap" gap={6}>
+                      <Text fw={600} size="sm" c="var(--text-heading)" lineClamp={2}>
+                        {item.name}
+                      </Text>
+                      {item.status && item.status !== 'draft' && (
+                        <ApprovalStatusBadge status={item.status} size="xs" />
+                      )}
+                    </Group>
+                    {pendingApprovalIds?.has(item.id) && (
+                      <Group gap={4} wrap="nowrap">
+                        <IconBellRinging size={12} color="var(--text-warn)" />
+                        <Text size="xs" fw={600} c="var(--text-warn)">
+                          Awaiting your approval
+                        </Text>
+                      </Group>
+                    )}
                     <Text size="xs" c="var(--text-muted)" tt="capitalize">
                       {item.domain} ·{' '}
                       {item.cost_start_year != null

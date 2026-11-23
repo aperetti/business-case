@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS initiatives (
     discount_rate REAL NOT NULL,
     cost_start_year INTEGER,
     external_resource_url TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -170,6 +171,78 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role_id);
+
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    notify_submitter INTEGER NOT NULL DEFAULT 1,
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY,
+    initiative_id TEXT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    workflow_id TEXT REFERENCES workflows(id) ON DELETE SET NULL,
+    workflow_name TEXT NOT NULL,
+    steps_json TEXT NOT NULL,
+    notify_submitter INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+    current_step_index INTEGER,
+    submitted_by_email TEXT NOT NULL DEFAULT '',
+    submitted_by_name TEXT NOT NULL DEFAULT '',
+    submitted_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_requests_initiative ON approval_requests(initiative_id, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
+
+CREATE TABLE IF NOT EXISTS approval_actions (
+    id TEXT PRIMARY KEY,
+    request_id TEXT REFERENCES approval_requests(id) ON DELETE CASCADE,
+    initiative_id TEXT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    step_index INTEGER,
+    step_name TEXT,
+    actor_email TEXT NOT NULL DEFAULT '',
+    actor_name TEXT NOT NULL DEFAULT '',
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_actions_initiative ON approval_actions(initiative_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_approval_actions_request ON approval_actions(request_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS email_settings (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    host TEXT NOT NULL DEFAULT '',
+    port INTEGER NOT NULL DEFAULT 587,
+    security TEXT NOT NULL DEFAULT 'starttls',
+    username TEXT NOT NULL DEFAULT '',
+    password TEXT NOT NULL DEFAULT '',
+    from_address TEXT NOT NULL DEFAULT '',
+    from_name TEXT NOT NULL DEFAULT 'ValueStream BCA',
+    app_base_url TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_log (
+    id TEXT PRIMARY KEY,
+    recipients_json TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    initiative_id TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_log_created ON email_log(created_at DESC);
 """
 
 
@@ -1012,6 +1085,7 @@ SYSTEM_ROLES: list[dict] = [
             "admin:roles",
             "admin:ai",
             "admin:sso",
+            "admin:workflows",
         ],
     },
     {
@@ -1122,6 +1196,19 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE initiatives ADD COLUMN cost_start_year INTEGER;")
     if "external_resource_url" not in cols:
         conn.execute("ALTER TABLE initiatives ADD COLUMN external_resource_url TEXT NOT NULL DEFAULT '';")
+    if "status" not in cols:
+        conn.execute("ALTER TABLE initiatives ADD COLUMN status TEXT NOT NULL DEFAULT 'draft';")
+
+    # Grant the new workflow-admin permission to the built-in Administrator role.
+    admin_role = conn.execute("SELECT permissions_json FROM roles WHERE id = 'role-admin'").fetchone()
+    if admin_role is not None:
+        perms = json.loads(admin_role["permissions_json"] or "[]")
+        if "admin:workflows" not in perms:
+            perms.append("admin:workflows")
+            conn.execute(
+                "UPDATE roles SET permissions_json = ? WHERE id = 'role-admin'",
+                (json.dumps(perms),),
+            )
 
     llm_cols = {row["name"] for row in conn.execute("PRAGMA table_info(llm_settings)").fetchall()}
     if "verified" not in llm_cols:
@@ -1191,6 +1278,47 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         )
 
 
+def _seed_email_settings(conn: sqlite3.Connection, now_iso: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO email_settings (id, updated_at) VALUES (1, ?)",
+        (now_iso,),
+    )
+
+
+DEFAULT_WORKFLOW_ID = "wf-standard"
+
+
+def _seed_default_workflow(conn: sqlite3.Connection, now_iso: str) -> None:
+    """Create a starter single-step workflow the first time the table is empty."""
+    if conn.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] > 0:
+        return
+    steps = [
+        {
+            "id": "step-exec-review",
+            "name": "Executive Review",
+            "approver_role_ids": ["role-reviewer", "role-admin"],
+            "approver_emails": [],
+            "required_approvals": 1,
+            "notify_approvers": True,
+        }
+    ]
+    conn.execute(
+        """
+        INSERT INTO workflows (
+            id, name, description, is_active, is_default, notify_submitter, steps_json, created_at, updated_at
+        ) VALUES (?, ?, ?, 1, 1, 1, ?, ?, ?)
+        """,
+        (
+            DEFAULT_WORKFLOW_ID,
+            "Standard Approval",
+            "Single executive sign-off. Edit or add steps in Admin → Approval Workflows.",
+            json.dumps(steps),
+            now_iso,
+            now_iso,
+        ),
+    )
+
+
 def init_db(db_path: Path, *, seed_demo: bool = True) -> None:
     """Create tables if needed and seed baseline catalog (and optional demo initiative)."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -1201,6 +1329,8 @@ def init_db(db_path: Path, *, seed_demo: bool = True) -> None:
         _seed_llm_settings(conn, now_iso)
         _seed_sso_settings(conn, now_iso)
         _seed_system_roles(conn, now_iso)
+        _seed_email_settings(conn, now_iso)
+        _seed_default_workflow(conn, now_iso)
         if seed_demo:
             _seed_demo_initiative(conn, now_iso)
             _seed_demo_users(conn, now_iso)

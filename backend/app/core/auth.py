@@ -213,12 +213,27 @@ def required_permission_for_request(method: str, path: str) -> str | None:
         or norm_path.startswith("/api/admin/odata/")
     ):
         return "admin:ai"
+    if (
+        norm_path == "/api/admin/workflows"
+        or norm_path.startswith("/api/admin/workflows/")
+        or norm_path == "/api/admin/email"
+        or norm_path.startswith("/api/admin/email/")
+    ):
+        return "admin:workflows"
     if norm_path.startswith("/api/admin"):
         return "admin:sso"
     if norm_path.startswith("/api/docs-agent"):
         return "docs:ask"
     if norm_path == "/api/catalog" or norm_path.startswith("/api/catalog/"):
         return "catalog:manage" if norm_method in _MUTATING_METHODS else "initiatives:read"
+    if norm_path.startswith("/api/approvals") or norm_path == "/api/workflows":
+        return "initiatives:read"
+    if norm_path.startswith("/api/initiatives/") and (
+        norm_path.endswith("/approval") or "/approval/" in norm_path
+    ):
+        # Approvers are often read-only reviewers; the workflow engine enforces who may
+        # submit, decide, withdraw, or reopen.
+        return "initiatives:read"
     if norm_path == "/api/initiatives" or norm_path.startswith("/api/initiatives/"):
         if norm_method == "POST" and (
             norm_path.endswith("/simulate") or norm_path.endswith("/bcas/compare")

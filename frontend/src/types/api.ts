@@ -236,6 +236,7 @@ export interface InitiativeSummary {
   bca_count: number;
   baseline_bca_id: string | null;
   bcas: BCASummary[];
+  status: InitiativeStatus;
   created_at: string;
   updated_at: string;
 }
@@ -249,6 +250,7 @@ export interface InitiativeDetail {
   discount_rate: number;
   cost_start_year: number | null;
   external_resource_url: string;
+  status: InitiativeStatus;
   created_at: string;
   updated_at: string;
   active_bca_id: string | null;
@@ -672,7 +674,7 @@ export interface SSOPublicConfigOut {
   entra_scopes: string;
 }
 
-export type AdminSection = 'users' | 'roles' | 'sso' | 'ai' | 'api-keys' | 'odata';
+export type AdminSection = 'users' | 'roles' | 'sso' | 'ai' | 'api-keys' | 'odata' | 'workflows';
 
 export type PermissionKey =
   | 'initiatives:read'
@@ -683,7 +685,8 @@ export type PermissionKey =
   | 'admin:users'
   | 'admin:roles'
   | 'admin:ai'
-  | 'admin:sso';
+  | 'admin:sso'
+  | 'admin:workflows';
 
 export type UserStatus = 'active' | 'invited' | 'disabled';
 export type UserAuthProvider = 'local' | 'firebase' | 'entra';
@@ -784,4 +787,151 @@ export interface AuthMeOut {
   sso_enabled: boolean;
   provider: SSOProvider;
   user: AuthUserOut | null;
+}
+
+// --- Approval workflows ---------------------------------------------------------
+
+export type InitiativeStatus = 'draft' | 'in_review' | 'approved' | 'rejected';
+export type ApprovalRequestStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn';
+export type ApprovalActionKind = 'submit' | 'approve' | 'reject' | 'withdraw' | 'reopen';
+export type SmtpSecurity = 'starttls' | 'ssl' | 'none';
+
+export interface WorkflowStep {
+  id: string;
+  name: string;
+  approver_role_ids: string[];
+  approver_emails: string[];
+  required_approvals: number;
+  notify_approvers: boolean;
+}
+
+export interface WorkflowOut {
+  id: string;
+  name: string;
+  description: string;
+  is_active: boolean;
+  is_default: boolean;
+  notify_submitter: boolean;
+  steps: WorkflowStep[];
+  in_use_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowCreate {
+  name: string;
+  description?: string;
+  is_active?: boolean;
+  is_default?: boolean;
+  notify_submitter?: boolean;
+  steps: WorkflowStep[];
+}
+
+export type WorkflowUpdate = Partial<WorkflowCreate>;
+
+export interface WorkflowSummaryOut {
+  id: string;
+  name: string;
+  description: string;
+  is_default: boolean;
+  step_names: string[];
+}
+
+export interface ApprovalActionOut {
+  id: string;
+  action: ApprovalActionKind;
+  step_index: number | null;
+  step_name: string | null;
+  actor_email: string;
+  actor_name: string;
+  comment: string;
+  created_at: string;
+}
+
+export interface ApprovalStepProgress {
+  index: number;
+  name: string;
+  required_approvals: number;
+  approvals: number;
+  state: 'pending' | 'active' | 'approved' | 'rejected' | 'skipped';
+  approvers: string[];
+}
+
+export interface ApprovalRequestOut {
+  id: string;
+  initiative_id: string;
+  workflow_id: string | null;
+  workflow_name: string;
+  status: ApprovalRequestStatus;
+  current_step_index: number | null;
+  submitted_by_email: string;
+  submitted_by_name: string;
+  submitted_at: string;
+  completed_at: string | null;
+  steps: ApprovalStepProgress[];
+  actions: ApprovalActionOut[];
+}
+
+export interface InitiativeApprovalOut {
+  initiative_id: string;
+  status: InitiativeStatus;
+  current_request: ApprovalRequestOut | null;
+  history: ApprovalActionOut[];
+  can_submit: boolean;
+  can_decide: boolean;
+  can_withdraw: boolean;
+  can_reopen: boolean;
+  decide_blocked_reason: string | null;
+}
+
+export interface PendingApprovalOut {
+  request_id: string;
+  initiative_id: string;
+  initiative_name: string;
+  workflow_name: string;
+  step_name: string;
+  submitted_by_name: string;
+  submitted_at: string;
+}
+
+export interface EmailSettingsOut {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: SmtpSecurity;
+  username: string;
+  password_set: boolean;
+  password_masked: string;
+  from_address: string;
+  from_name: string;
+  app_base_url: string;
+  configured: boolean;
+  updated_at: string | null;
+}
+
+export interface EmailSettingsUpdate {
+  enabled: boolean;
+  host: string;
+  port: number;
+  security: SmtpSecurity;
+  username: string;
+  password?: string | null;
+  from_address: string;
+  from_name: string;
+  app_base_url: string;
+}
+
+export interface EmailTestResponse {
+  ok: boolean;
+  message: string;
+}
+
+export interface EmailLogOut {
+  id: string;
+  recipients: string[];
+  subject: string;
+  status: 'sent' | 'failed' | 'skipped';
+  error: string;
+  initiative_id: string | null;
+  created_at: string;
 }

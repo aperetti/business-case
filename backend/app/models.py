@@ -450,6 +450,7 @@ class InitiativeSummary(BaseModel):
     bca_count: int = 1
     baseline_bca_id: str | None = None
     bcas: list[BCASummary] = Field(default_factory=list)
+    status: "InitiativeStatus" = "draft"
     created_at: str
     updated_at: str
 
@@ -465,6 +466,7 @@ class InitiativeDetail(BaseModel):
     discount_rate: float
     cost_start_year: int | None = None
     external_resource_url: str = ""
+    status: "InitiativeStatus" = "draft"
     created_at: str
     updated_at: str
     active_bca_id: str | None = None
@@ -1177,6 +1179,7 @@ PermissionKey = Literal[
     "admin:roles",
     "admin:ai",
     "admin:sso",
+    "admin:workflows",
 ]
 UserStatus = Literal["active", "invited", "disabled"]
 UserAuthProvider = Literal["local", "firebase", "entra"]
@@ -1360,3 +1363,289 @@ class ODataStatusOut(BaseModel):
 
 
 BCADetail.model_rebuild()
+
+
+# --- Approval workflows -------------------------------------------------------
+
+InitiativeStatus = Literal["draft", "in_review", "approved", "rejected"]
+ApprovalRequestStatus = Literal["pending", "approved", "rejected", "withdrawn"]
+ApprovalActionKind = Literal["submit", "approve", "reject", "withdraw", "reopen"]
+SmtpSecurity = Literal["starttls", "ssl", "none"]
+
+
+def _clean_email_list(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for raw in values:
+        if not str(raw).strip():
+            continue
+        email = _validate_clean_email(str(raw))
+        if email not in cleaned:
+            cleaned.append(email)
+    return cleaned
+
+
+class WorkflowStep(BaseModel):
+    """One sequential approval stage. Any listed role member or email may approve."""
+
+    id: str = Field(default="", max_length=64)
+    name: str = Field(..., min_length=1, max_length=120)
+    approver_role_ids: list[str] = Field(default_factory=list, max_length=20)
+    approver_emails: list[str] = Field(default_factory=list, max_length=50)
+    required_approvals: int = Field(default=1, ge=1, le=20)
+    notify_approvers: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Step name cannot be empty.")
+        return cleaned
+
+    @field_validator("approver_role_ids")
+    @classmethod
+    def dedupe_roles(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(r.strip() for r in v if r.strip()))
+
+    @field_validator("approver_emails")
+    @classmethod
+    def clean_emails(cls, v: list[str]) -> list[str]:
+        return _clean_email_list(v)
+
+    @model_validator(mode="after")
+    def require_approvers(self) -> "WorkflowStep":
+        if not self.approver_role_ids and not self.approver_emails:
+            raise ValueError(f"Step '{self.name}' needs at least one approver role or email.")
+        return self
+
+
+class WorkflowCreate(BaseModel):
+    """Payload to define an approval workflow."""
+
+    name: str = Field(..., min_length=2, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    is_active: bool = True
+    is_default: bool = False
+    notify_submitter: bool = True
+    steps: list[WorkflowStep] = Field(..., min_length=1, max_length=20)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Workflow name must be at least 2 characters.")
+        return cleaned
+
+
+class WorkflowUpdate(BaseModel):
+    """Partial update payload for an approval workflow."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    is_active: bool | None = None
+    is_default: bool | None = None
+    notify_submitter: bool | None = None
+    steps: list[WorkflowStep] | None = Field(default=None, min_length=1, max_length=20)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Workflow name must be at least 2 characters.")
+        return cleaned
+
+
+class WorkflowOut(BaseModel):
+    """Persisted approval workflow definition."""
+
+    id: str
+    name: str
+    description: str
+    is_active: bool
+    is_default: bool
+    notify_submitter: bool
+    steps: list[WorkflowStep]
+    in_use_count: int = 0
+    created_at: str
+    updated_at: str
+
+
+class WorkflowSummaryOut(BaseModel):
+    """Minimal active workflow listing for submitters."""
+
+    id: str
+    name: str
+    description: str
+    is_default: bool
+    step_names: list[str]
+
+
+class ApprovalSubmitRequest(BaseModel):
+    """Submit an initiative into an approval workflow."""
+
+    workflow_id: str | None = Field(default=None, max_length=64)
+    comment: str = Field(default="", max_length=2000)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    """Approve or reject the current step of a pending approval request."""
+
+    decision: Literal["approve", "reject"]
+    comment: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def require_reject_reason(self) -> "ApprovalDecisionRequest":
+        if self.decision == "reject" and not self.comment.strip():
+            raise ValueError("A comment is required when rejecting.")
+        return self
+
+
+class ApprovalCommentRequest(BaseModel):
+    """Optional comment for withdraw / reopen actions."""
+
+    comment: str = Field(default="", max_length=2000)
+
+
+class ApprovalActionOut(BaseModel):
+    """Audit-trail entry for an approval request."""
+
+    id: str
+    action: ApprovalActionKind
+    step_index: int | None = None
+    step_name: str | None = None
+    actor_email: str
+    actor_name: str
+    comment: str
+    created_at: str
+
+
+class ApprovalStepProgress(BaseModel):
+    """Progress of one workflow step within a request."""
+
+    index: int
+    name: str
+    required_approvals: int
+    approvals: int
+    state: Literal["pending", "active", "approved", "rejected", "skipped"]
+    approvers: list[str]
+
+
+class ApprovalRequestOut(BaseModel):
+    """Approval request with step progress, history, and the caller's allowed actions."""
+
+    id: str
+    initiative_id: str
+    workflow_id: str | None
+    workflow_name: str
+    status: ApprovalRequestStatus
+    current_step_index: int | None
+    submitted_by_email: str
+    submitted_by_name: str
+    submitted_at: str
+    completed_at: str | None = None
+    steps: list[ApprovalStepProgress]
+    actions: list[ApprovalActionOut]
+
+
+class InitiativeApprovalOut(BaseModel):
+    """Approval state for an initiative, including what the current caller may do."""
+
+    initiative_id: str
+    status: InitiativeStatus
+    current_request: ApprovalRequestOut | None = None
+    history: list[ApprovalActionOut] = Field(default_factory=list)
+    can_submit: bool = False
+    can_decide: bool = False
+    can_withdraw: bool = False
+    can_reopen: bool = False
+    decide_blocked_reason: str | None = None
+
+
+class PendingApprovalOut(BaseModel):
+    """An approval step awaiting action by the current caller."""
+
+    request_id: str
+    initiative_id: str
+    initiative_name: str
+    workflow_name: str
+    step_name: str
+    submitted_by_name: str
+    submitted_at: str
+
+
+class EmailSettingsOut(BaseModel):
+    """SMTP notification settings (password masked)."""
+
+    enabled: bool
+    host: str
+    port: int
+    security: SmtpSecurity
+    username: str
+    password_set: bool
+    password_masked: str
+    from_address: str
+    from_name: str
+    app_base_url: str
+    configured: bool
+    updated_at: str | None = None
+
+
+class EmailSettingsUpdate(BaseModel):
+    """Update SMTP settings. Omit password to keep the stored one; send "" to clear it."""
+
+    enabled: bool = False
+    host: str = Field(default="", max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    security: SmtpSecurity = "starttls"
+    username: str = Field(default="", max_length=255)
+    password: str | None = Field(default=None, max_length=500)
+    from_address: str = Field(default="", max_length=200)
+    from_name: str = Field(default="ValueStream BCA", max_length=120)
+    app_base_url: str = Field(default="", max_length=500)
+
+    @field_validator("host", "username", "from_name")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("from_address")
+    @classmethod
+    def check_from(cls, v: str) -> str:
+        return _validate_clean_email(v) if v.strip() else ""
+
+    @field_validator("app_base_url")
+    @classmethod
+    def check_base_url(cls, v: str) -> str:
+        return _validate_optional_http_url(v, "App base URL").rstrip("/")
+
+
+class EmailTestRequest(BaseModel):
+    """Send a test notification to one address."""
+
+    to: str = Field(..., min_length=3, max_length=200)
+
+    @field_validator("to")
+    @classmethod
+    def check_to(cls, v: str) -> str:
+        return _validate_clean_email(v)
+
+
+class EmailTestResponse(BaseModel):
+    ok: bool
+    message: str
+
+
+class EmailLogOut(BaseModel):
+    """Outbound notification log entry."""
+
+    id: str
+    recipients: list[str]
+    subject: str
+    status: Literal["sent", "failed", "skipped"]
+    error: str
+    initiative_id: str | None = None
+    created_at: str

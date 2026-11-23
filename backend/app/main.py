@@ -16,10 +16,11 @@ from app.api.chat import router as chat_router
 from app.api.initiatives import router as initiatives_router
 from app.api.odata import router_alias as odata_alias_router, router_v4 as odata_v4_router
 from app.api.simulations import router as simulations_router
+from app.api.workflows import admin_router as workflows_admin_router, router as approvals_router
 from app.config import get_settings, load_dotenv_files
 from app.core.auth import AuthError, authenticate_request, required_permission_for_request
 from app.db.database import init_db
-from app.db.repository import ForbiddenError, check_health, get_sso_settings
+from app.db.repository import ForbiddenError, LockedError, check_health, get_sso_settings
 from app.models import HealthResponse
 
 
@@ -106,6 +107,10 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
         allow_headers=["*"],
     )
 
+    @application.exception_handler(LockedError)
+    async def locked_error_handler(_: Request, exc: LockedError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
     @application.get("/health", response_model=HealthResponse, tags=["system"])
     def health_check(request: Request) -> HealthResponse:
         try:
@@ -121,6 +126,8 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
     application.include_router(simulations_router)
     application.include_router(initiatives_router)
     application.include_router(admin_router)
+    application.include_router(workflows_admin_router)
+    application.include_router(approvals_router)
     application.include_router(public_auth_router)
     application.include_router(chat_router)
     application.include_router(odata_v4_router)

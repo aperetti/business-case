@@ -76,6 +76,28 @@ class ForbiddenError(Exception):
     """Raised when an authenticated principal lacks authorization."""
 
 
+class LockedError(Exception):
+    """Raised when an initiative cannot be edited because of its approval status."""
+
+
+LOCKED_INITIATIVE_STATUSES = frozenset({"in_review", "approved"})
+
+
+def _assert_initiative_editable(row: sqlite3.Row | None) -> None:
+    """Block content edits while an initiative is under review or approved."""
+    if row is None:
+        return
+    status_val = row["status"] if "status" in row.keys() else "draft"
+    if status_val in LOCKED_INITIATIVE_STATUSES:
+        label = "under review" if status_val == "in_review" else "approved"
+        hint = (
+            "Withdraw the approval request to make changes."
+            if status_val == "in_review"
+            else "Reopen it as a draft to make changes."
+        )
+        raise LockedError(f"This initiative is {label} and locked for editing. {hint}")
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -146,6 +168,7 @@ def _row_to_initiative_dict(row: sqlite3.Row) -> dict[str, Any]:
         "discount_rate": float(row["discount_rate"]),
         "cost_start_year": int(row["cost_start_year"]) if row["cost_start_year"] is not None else None,
         "external_resource_url": row["external_resource_url"] or "",
+        "status": (row["status"] if "status" in row.keys() else None) or "draft",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -465,6 +488,7 @@ def _build_initiative_detail(
         discount_rate=active_bca["discount_rate"],
         cost_start_year=active_bca["cost_start_year"],
         external_resource_url=init_dict["external_resource_url"],
+        status=init_dict.get("status", "draft"),
         created_at=init_dict["created_at"],
         updated_at=init_dict["updated_at"],
         active_bca_id=active_bca["id"],
@@ -537,6 +561,7 @@ def list_initiatives(db_path: Path) -> list[InitiativeSummary]:
                     bca_count=len(bca_summaries),
                     baseline_bca_id=base_sum.id,
                     bcas=bca_summaries,
+                    status=init_d["status"],
                     created_at=init_d["created_at"],
                     updated_at=init_d["updated_at"],
                 )
@@ -672,6 +697,7 @@ def update_initiative(db_path: Path, initiative_id: str, payload: InitiativeUpda
         row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         if not row:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        _assert_initiative_editable(row)
         current = _row_to_initiative_dict(row)
         baseline_bca = _ensure_baseline_bca(conn, current)
 
@@ -742,6 +768,9 @@ def update_initiative(db_path: Path, initiative_id: str, payload: InitiativeUpda
 
 def delete_initiative(db_path: Path, initiative_id: str) -> None:
     with get_connection(db_path) as conn:
+        _assert_initiative_editable(
+            conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
+        )
         cur = conn.execute("DELETE FROM initiatives WHERE id = ?", (initiative_id,))
         if cur.rowcount == 0:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
@@ -804,6 +833,7 @@ def create_bca(db_path: Path, initiative_id: str, payload: BCACreate) -> BCADeta
         init_row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         if not init_row:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        _assert_initiative_editable(init_row)
         init_d = _row_to_initiative_dict(init_row)
         baseline_bca = _ensure_baseline_bca(conn, init_d)
 
@@ -910,6 +940,7 @@ def update_bca(
         init_row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         if not init_row:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        _assert_initiative_editable(init_row)
         init_d = _row_to_initiative_dict(init_row)
         current = _resolve_bca_dict(conn, init_d, bca_id)
 
@@ -986,6 +1017,7 @@ def delete_bca(db_path: Path, initiative_id: str, bca_id: str) -> None:
         init_row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         if not init_row:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        _assert_initiative_editable(init_row)
         init_d = _row_to_initiative_dict(init_row)
         target = _resolve_bca_dict(conn, init_d, bca_id)
 
@@ -1047,6 +1079,7 @@ def create_item(
         init_row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         if not init_row:
             raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        _assert_initiative_editable(init_row)
         init_d = _row_to_initiative_dict(init_row)
         bca_d = _resolve_bca_dict(conn, init_d, target_bca_param)
         resolved_bca_id = bca_d["id"]
@@ -1115,6 +1148,7 @@ def update_item(db_path: Path, item_id: str, payload: InitiativeItemUpdate) -> I
 
         init_row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
         assert init_row is not None
+        _assert_initiative_editable(init_row)
         init_d = _row_to_initiative_dict(init_row)
         bca_d = _resolve_bca_dict(conn, init_d, current.get("bca_id"))
         resolved_bca_id = bca_d["id"]
@@ -1196,6 +1230,9 @@ def delete_item(db_path: Path, item_id: str) -> None:
             raise NotFoundError(f"Initiative item '{item_id}' not found.")
         initiative_id = row["initiative_id"]
         bca_id = row["bca_id"]
+        _assert_initiative_editable(
+            conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
+        )
         conn.execute("DELETE FROM initiative_items WHERE id = ?", (item_id,))
         if bca_id:
             conn.execute("UPDATE initiative_bcas SET updated_at = ? WHERE id = ?", (now, bca_id))

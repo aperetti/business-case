@@ -32,6 +32,7 @@ import {
   IconArrowLeft,
   IconBook,
   IconCheck,
+  IconChecklist,
   IconCopy,
   IconDatabaseExport,
   IconFingerprint,
@@ -60,6 +61,7 @@ import type {
 } from '../types/api';
 import { AdminODataPanel } from './AdminODataPanel';
 import { AdminRolesPanel } from './AdminRolesPanel';
+import { AdminWorkflowsPanel } from './AdminWorkflowsPanel';
 import { AdminUsersPanel } from './AdminUsersPanel';
 
 interface Props {
@@ -445,7 +447,7 @@ export function AdminPortal({
             <div>
               <Title order={4}>Admin Portal</Title>
               <Text size="xs" c="var(--text-muted)">
-                Users, roles, SSO, AI models & API keys
+                Users, roles, SSO, workflows, AI & API keys
               </Text>
             </div>
             <Button
@@ -473,6 +475,9 @@ export function AdminPortal({
               <Tabs.Tab value="sso" leftSection={<IconFingerprint size={14} />}>
                 SSO
               </Tabs.Tab>
+              <Tabs.Tab value="workflows" leftSection={<IconChecklist size={14} />}>
+                Workflows
+              </Tabs.Tab>
               <Tabs.Tab value="ai" leftSection={<IconSparkles size={14} />}>
                 AI
               </Tabs.Tab>
@@ -490,6 +495,8 @@ export function AdminPortal({
       {activeSection === 'users' && <AdminUsersPanel />}
 
       {activeSection === 'roles' && <AdminRolesPanel />}
+
+      {activeSection === 'workflows' && <AdminWorkflowsPanel />}
 
       {activeSection === 'odata' && (
         <AdminODataPanel onGoToApiKeys={() => onSelectSection('api-keys')} />
