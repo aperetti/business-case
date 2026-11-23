@@ -84,6 +84,17 @@ def test_sso_firebase_and_entra_persistence_secret_masking_and_public_config(cli
     assert fb["firebase_sign_in_methods"] == ["google", "microsoft"]
     assert fb["oidc_discovery_url"] == "https://securetoken.google.com/valuestream-prod/.well-known/openid-configuration"
 
+    # Once Firebase SSO is active, the Admin API is no longer reachable anonymously,
+    # even though general access is not enforced.
+    assert client.get("/api/admin/sso").status_code == 401
+    assert client.put("/api/admin/sso", json={"enabled": False}).status_code == 401
+
+    # Simulate an authenticated admin disabling SSO so the rest of the test can continue.
+    import sqlite3
+
+    with sqlite3.connect(client.app.state.db_path) as conn:
+        conn.execute("UPDATE sso_settings SET enabled = 0 WHERE id = 1")
+
     # Switch to Microsoft Entra ID and verify client secret masking, preserve, and clear
     entra_saved = client.put(
         "/api/admin/sso",
@@ -246,7 +257,9 @@ def test_sso_env_overrides_db_and_locks_admin_portal(
     saved_db = client.put(
         "/api/admin/sso",
         json={
-            "enabled": True,
+            # Saved disabled: an active Firebase config would (correctly) lock anonymous
+            # callers out of the Admin API for the rest of this test.
+            "enabled": False,
             "provider": "firebase",
             "enforce_sso": False,
             "firebase_project_id": "db-firebase-proj",
