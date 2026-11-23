@@ -347,3 +347,46 @@ def test_inbound_api_keys_env_override_and_lock(client: TestClient, monkeypatch)
     # Admin create/delete endpoints return 409 Conflict when locked
     assert client.post("/api/admin/api-keys", json={"name": "Blocked"}).status_code == 409
     assert client.delete("/api/admin/api-keys/env-key-1").status_code == 409
+
+
+def test_saved_llm_key_is_never_sent_to_a_different_endpoint(client: TestClient, monkeypatch) -> None:
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("authorization")))
+        return httpx.Response(200, json={"data": [{"id": "m"}]})
+
+    _install_mock_httpx(monkeypatch, handler)
+
+    saved = client.put(
+        "/api/admin/llm",
+        json={"base_url": "https://api.example.com/v1", "api_key": "sk-real-secret-0001", "model": "m"},
+    )
+    assert saved.status_code == 200
+
+    # Probing a different endpoint without re-entering the key is refused, and nothing is sent
+    for path in ("/api/admin/llm/models", "/api/admin/llm/test"):
+        res = client.post(path, json={"base_url": "https://attacker.example/v1", "model": "m"})
+        assert res.status_code == 422, path
+    assert seen == []
+
+    # Same endpoint (trailing slash ignored) still reuses the saved key
+    ok = client.post("/api/admin/llm/models", json={"base_url": "https://api.example.com/v1/"})
+    assert ok.status_code == 200
+    assert seen[-1][1] == "Bearer sk-real-secret-0001"
+
+    # Saving a new base URL while keeping the old key is refused; re-entering or clearing works
+    moved = client.put("/api/admin/llm", json={"base_url": "https://attacker.example/v1", "model": "m"})
+    assert moved.status_code == 422
+    assert client.get("/api/admin/llm").json()["base_url"] == "https://api.example.com/v1"
+
+    rekeyed = client.put(
+        "/api/admin/llm",
+        json={"base_url": "https://other.example/v1", "api_key": "sk-new-0002", "model": "m"},
+    )
+    assert rekeyed.status_code == 200
+    cleared = client.put(
+        "/api/admin/llm",
+        json={"base_url": "http://localhost:11434/v1", "clear_api_key": True, "model": "m"},
+    )
+    assert cleared.status_code == 200

@@ -65,6 +65,11 @@ from app.models import (
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+LLM_KEY_REENTRY_MESSAGE = (
+    "The saved API key is only used with the endpoint it was saved for. "
+    "Re-enter the API key (or clear it) when changing the Endpoint Base URL."
+)
 public_auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -76,13 +81,21 @@ def _resolve_effective_connection(
     clear_api_key: bool,
     timeout_seconds: int | None,
 ) -> tuple[str, str, int]:
-    eff_base = base_url if base_url is not None else str(raw_saved.get("base_url") or "")
+    saved_base = str(raw_saved.get("base_url") or "")
+    eff_base = base_url if base_url is not None else saved_base
     if clear_api_key:
         eff_key = ""
     elif api_key is not None and api_key.strip():
         eff_key = api_key.strip()
     else:
         eff_key = str(raw_saved.get("api_key") or "")
+        # Never send the stored secret to an endpoint other than the one it was saved for;
+        # otherwise a caller could point base_url at their own server and capture the key.
+        if eff_key and eff_base.rstrip("/") != saved_base.rstrip("/"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=LLM_KEY_REENTRY_MESSAGE,
+            )
     eff_timeout = (
         int(timeout_seconds)
         if timeout_seconds is not None
@@ -100,7 +113,10 @@ def get_admin_llm_settings(request: Request) -> LLMSettingsOut:
 @router.put("/llm", response_model=LLMSettingsOut)
 def put_admin_llm_settings(payload: LLMSettingsUpdate, request: Request) -> LLMSettingsOut:
     """Persist OpenAI-compatible endpoint, secret key (or preserve existing), model, and tuning defaults."""
-    return update_llm_settings(request.app.state.db_path, payload)
+    try:
+        return update_llm_settings(request.app.state.db_path, payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 @router.post("/llm/test", response_model=LLMTestResponse)

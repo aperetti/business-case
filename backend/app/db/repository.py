@@ -1433,6 +1433,14 @@ def update_llm_settings(db_path: Path, payload: LLMSettingsUpdate) -> LLMSetting
             next_key = payload.api_key.strip()
         else:
             next_key = current["api_key"]
+            current_base = str(current.get("base_url") or "").rstrip("/")
+            if next_key and payload.base_url.rstrip("/") != current_base:
+                # Keep the stored secret bound to its endpoint so it can't be redirected
+                # to an attacker-controlled base URL.
+                raise ValidationError(
+                    "The saved API key is only used with the endpoint it was saved for. "
+                    "Re-enter the API key (or clear it) when changing the Endpoint Base URL."
+                )
 
         conn.execute(
             """
