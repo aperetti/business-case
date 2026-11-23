@@ -12,12 +12,19 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.config import (
+    get_env_api_keys,
+    get_sso_env_config,
+    is_api_keys_env_managed,
+    is_sso_env_managed,
+)
 from app.core.catalog import describe_formula
 from app.core.engine import run_deterministic
 from app.db.database import get_connection
 from app.models import (
     ApiKeyCreatedOut,
     ApiKeyOut,
+    AuthUserOut,
     BCAComparisonRecord,
     BCAComparisonResult,
     BCACreate,
@@ -62,6 +69,10 @@ class NotFoundError(Exception):
 
 class ValidationError(Exception):
     """Raised on domain validation rule violations."""
+
+
+class ForbiddenError(Exception):
+    """Raised when an authenticated principal lacks authorization."""
 
 
 def _now_iso() -> str:
@@ -1453,7 +1464,33 @@ def update_llm_settings(db_path: Path, payload: LLMSettingsUpdate) -> LLMSetting
     return _raw_to_llm_out(_row_to_llm_raw(row))
 
 
+def _mask_env_api_key(raw_key: str) -> tuple[str, str]:
+    if len(raw_key) >= 12:
+        return raw_key[:4], raw_key[-4:]
+    if len(raw_key) >= 6:
+        return raw_key[:2], raw_key[-2:]
+    return "", ""
+
+
 def list_api_keys(db_path: Path) -> list[ApiKeyOut]:
+    env_keys = get_env_api_keys()
+    if env_keys:
+        items: list[ApiKeyOut] = []
+        for idx, raw_key in enumerate(env_keys, start=1):
+            prefix, last4 = _mask_env_api_key(raw_key)
+            items.append(
+                ApiKeyOut(
+                    id=f"env-key-{idx}",
+                    name=f"Environment Key #{idx} (BCA_API_KEYS)",
+                    key_prefix=prefix,
+                    key_last4=last4,
+                    created_at="environment",
+                    last_used_at=None,
+                    managed_by_env=True,
+                )
+            )
+        return items
+
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT id, name, key_prefix, key_last4, created_at, last_used_at FROM api_keys ORDER BY created_at DESC"
@@ -1466,12 +1503,18 @@ def list_api_keys(db_path: Path) -> list[ApiKeyOut]:
             key_last4=row["key_last4"],
             created_at=row["created_at"],
             last_used_at=row["last_used_at"],
+            managed_by_env=False,
         )
         for row in rows
     ]
 
 
 def create_api_key(db_path: Path, name: str) -> ApiKeyCreatedOut:
+    if is_api_keys_env_managed():
+        raise ConflictError(
+            "Inbound API keys are managed by the BCA_API_KEYS environment variable and locked in the Admin Portal."
+        )
+
     key_id = str(uuid4())
     secret_key = f"bca-{secrets.token_urlsafe(24)}"
     key_hash = hashlib.sha256(secret_key.encode("utf-8")).hexdigest()
@@ -1495,11 +1538,17 @@ def create_api_key(db_path: Path, name: str) -> ApiKeyCreatedOut:
         key_last4=key_last4,
         created_at=now,
         last_used_at=None,
+        managed_by_env=False,
         secret_key=secret_key,
     )
 
 
 def delete_api_key(db_path: Path, key_id: str) -> None:
+    if is_api_keys_env_managed():
+        raise ConflictError(
+            "Inbound API keys are managed by the BCA_API_KEYS environment variable and locked in the Admin Portal."
+        )
+
     with get_connection(db_path) as conn:
         cur = conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
         if cur.rowcount == 0:
@@ -1507,13 +1556,29 @@ def delete_api_key(db_path: Path, key_id: str) -> None:
 
 
 def count_inbound_api_keys(db_path: Path) -> int:
+    env_keys = get_env_api_keys()
+    if env_keys:
+        return len(env_keys)
+
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM api_keys").fetchone()
     return int(row["cnt"]) if row else 0
 
 
 def verify_inbound_api_key(db_path: Path, bearer_token: str | None) -> bool:
-    """Allow open access when no keys are stored; otherwise verify Bearer token against SHA-256 hashes."""
+    """Allow open access when no keys are stored; otherwise verify Bearer token against env or SHA-256 hashes."""
+    env_keys = get_env_api_keys()
+    if env_keys:
+        if not bearer_token or not bearer_token.strip():
+            return False
+        candidate_hash = hashlib.sha256(bearer_token.strip().encode("utf-8")).hexdigest()
+        matched = False
+        for raw_key in env_keys:
+            expected_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+            if hmac.compare_digest(candidate_hash, expected_hash):
+                matched = True
+        return matched
+
     with get_connection(db_path) as conn:
         rows = conn.execute("SELECT id, key_hash FROM api_keys").fetchall()
         if not rows:
@@ -1652,13 +1717,19 @@ def _raw_to_sso_out(raw: dict[str, Any]) -> SSOSettingsOut:
         configured=_is_sso_configured(raw),
         oidc_discovery_url=discovery_url,
         updated_at=raw.get("updated_at"),
+        managed_by_env=bool(raw.get("managed_by_env", False)),
+        env_vars=list(raw.get("env_vars", [])),
     )
 
 
 def get_sso_settings_raw(db_path: Path) -> dict[str, Any]:
+    env_cfg, env_vars = get_sso_env_config()
+    if env_cfg is not None:
+        return {**env_cfg, "managed_by_env": True, "env_vars": env_vars}
+
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT * FROM sso_settings WHERE id = 1").fetchone()
-    return _row_to_sso_raw(row)
+    return {**_row_to_sso_raw(row), "managed_by_env": False, "env_vars": []}
 
 
 def get_sso_settings(db_path: Path) -> SSOSettingsOut:
@@ -1688,6 +1759,11 @@ def get_sso_public_config(db_path: Path) -> SSOPublicConfigOut:
 
 
 def update_sso_settings(db_path: Path, payload: SSOSettingsUpdate) -> SSOSettingsOut:
+    if is_sso_env_managed():
+        raise ConflictError(
+            "SSO settings are managed by environment variables and locked in the Admin Portal. Update your .env file and restart the server to change them."
+        )
+
     now = _now_iso()
     with get_connection(db_path) as conn:
         existing = conn.execute("SELECT * FROM sso_settings WHERE id = 1").fetchone()
@@ -2006,3 +2082,148 @@ def delete_user(db_path: Path, user_id: str) -> None:
         cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         if cur.rowcount == 0:
             raise NotFoundError(f"User '{user_id}' not found.")
+
+
+def _should_refresh_last_login(last_login_raw: str | None, now_dt: datetime) -> bool:
+    if not last_login_raw:
+        return True
+    try:
+        prev_dt = datetime.fromisoformat(last_login_raw)
+        if prev_dt.tzinfo is None:
+            prev_dt = prev_dt.replace(tzinfo=timezone.utc)
+        return (now_dt - prev_dt).total_seconds() >= 300.0
+    except ValueError:
+        return True
+
+
+def resolve_or_provision_sso_user(
+    db_path: Path,
+    *,
+    email: str,
+    display_name: str,
+    photo_url: str = "",
+    provider: SSOProvider = "firebase",
+    allowed_domains: list[str] | None = None,
+    admin_emails: list[str] | None = None,
+) -> AuthUserOut:
+    """Resolve an authenticated SSO email to an RBAC user, enforcing domain/invite policy."""
+    norm_email = email.strip().lower()
+    if "@" not in norm_email:
+        raise ForbiddenError("Verified account is missing a valid email address.")
+    domain = norm_email.rsplit("@", 1)[1]
+    allowed_set = {d.strip().lower().lstrip("@") for d in (allowed_domains or []) if d and d.strip()}
+    admin_set = {a.strip().lower() for a in (admin_emails or []) if a and a.strip()}
+
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
+    clean_name = display_name.strip() or norm_email.split("@", 1)[0]
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(email) = ?",
+            (norm_email,),
+        ).fetchone()
+
+        is_listed_admin = norm_email in admin_set
+
+        if is_listed_admin:
+            if row is not None:
+                needs_update = (
+                    str(row["role_id"]) != "role-admin"
+                    or str(row["status"]) != "active"
+                    or str(row["auth_provider"]) != provider
+                    or _should_refresh_last_login(row["last_login_at"], now_dt)
+                )
+                if needs_update:
+                    next_name = str(row["display_name"] or "").strip() or clean_name
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET role_id = 'role-admin',
+                            status = 'active',
+                            auth_provider = ?,
+                            display_name = ?,
+                            last_login_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (provider, next_name, now, now, row["id"]),
+                    )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO users (
+                        id, email, display_name, role_id, status, auth_provider, last_login_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'role-admin', 'active', ?, ?, ?, ?)
+                    """,
+                    (str(uuid4()), norm_email, clean_name, provider, now, now, now),
+                )
+        elif row is not None:
+            current_status = str(row["status"] or "")
+            if current_status == "disabled":
+                raise ForbiddenError(
+                    "Your account has been disabled. Contact a platform administrator."
+                )
+            needs_activation = current_status != "active"
+            if needs_activation or _should_refresh_last_login(row["last_login_at"], now_dt):
+                next_provider = provider if str(row["auth_provider"]) in {"local", ""} else str(row["auth_provider"])
+                next_name = (
+                    clean_name
+                    if needs_activation or not str(row["display_name"] or "").strip()
+                    else str(row["display_name"])
+                )
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET status = 'active',
+                        auth_provider = ?,
+                        display_name = ?,
+                        last_login_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (next_provider, next_name, now, now, row["id"]),
+                )
+        else:
+            if allowed_set:
+                if domain not in allowed_set:
+                    raise ForbiddenError(
+                        f"Email domain '{domain}' is not authorized to access this workspace."
+                    )
+            elif admin_set:
+                raise ForbiddenError(
+                    "Access requires an administrator invitation. Ask an admin to add your email under Admin Portal → Users."
+                )
+
+            conn.execute(
+                """
+                INSERT INTO users (
+                    id, email, display_name, role_id, status, auth_provider, last_login_at, created_at, updated_at
+                ) VALUES (?, ?, ?, 'role-analyst', 'active', ?, ?, ?, ?)
+                """,
+                (str(uuid4()), norm_email, clean_name, provider, now, now, now),
+            )
+
+        resolved = conn.execute(
+            """
+            SELECT u.*, r.name AS role_name, r.permissions_json
+            FROM users u
+            JOIN roles r ON r.id = u.role_id
+            WHERE LOWER(u.email) = ?
+            """,
+            (norm_email,),
+        ).fetchone()
+
+    assert resolved is not None
+    perms = [str(p) for p in json.loads(resolved["permissions_json"] or "[]")]
+    return AuthUserOut(
+        id=str(resolved["id"]),
+        email=str(resolved["email"]),
+        display_name=str(resolved["display_name"]),
+        role_id=str(resolved["role_id"]),
+        role_name=str(resolved["role_name"]),
+        permissions=perms,
+        is_admin=any(p.startswith("admin:") for p in perms),
+        photo_url=photo_url,
+        auth_provider=resolved["auth_provider"],
+    )

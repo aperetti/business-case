@@ -306,3 +306,44 @@ def test_openai_gateway_auth_kb_context_json_and_streaming(client: TestClient, m
     # Revoke key and verify /v1 opens cleanly when 0 keys remain
     assert client.delete(f"/api/admin/api-keys/{key_id}").status_code == 204
     assert client.get("/v1/models").status_code == 200
+
+
+def test_inbound_api_keys_env_override_and_lock(client: TestClient, monkeypatch) -> None:
+    # Create a SQLite-backed API key first
+    db_key_res = client.post("/api/admin/api-keys", json={"name": "DB Local Key"})
+    assert db_key_res.status_code == 201
+    db_secret = db_key_res.json()["secret_key"]
+
+    # Configure BCA_API_KEYS -> overrides DB keys and locks Admin API key mutations
+    monkeypatch.setenv("BCA_API_KEYS", "bca-env-prod-123456,short")
+
+    listed = client.get("/api/admin/api-keys")
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) == 2
+    assert all(item["managed_by_env"] is True for item in items)
+    assert items[0]["key_prefix"] == "bca-"
+    assert items[0]["key_last4"] == "3456"
+    assert items[1]["key_prefix"] == ""
+    assert items[1]["key_last4"] == ""
+    assert "123456" not in listed.text
+    assert "short" not in listed.text
+
+    # Unauthenticated and old DB key requests are rejected; both env keys succeed on /v1 & /odata
+    assert client.get("/v1/models").status_code == 401
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {db_secret}"}).status_code == 401
+    assert client.get("/odata/v4/Initiatives", headers={"Authorization": f"Bearer {db_secret}"}).status_code == 401
+
+    assert client.get("/v1/models", headers={"Authorization": "Bearer bca-env-prod-123456"}).status_code == 200
+    assert client.get("/v1/models", headers={"Authorization": "Bearer short"}).status_code == 200
+    assert (
+        client.get("/odata/v4/Initiatives", headers={"X-API-Key": "bca-env-prod-123456"}).status_code == 200
+    )
+
+    odata_status = client.get("/api/admin/odata/status").json()
+    assert odata_status["auth_mode"] == "api_key_required"
+    assert odata_status["inbound_key_count"] == 2
+
+    # Admin create/delete endpoints return 409 Conflict when locked
+    assert client.post("/api/admin/api-keys", json={"name": "Blocked"}).status_code == 409
+    assert client.delete("/api/admin/api-keys/env-key-1").status_code == 409

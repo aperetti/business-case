@@ -514,6 +514,7 @@ export interface ApiKeyOut {
   key_last4: string;
   created_at: string;
   last_used_at: string | null;
+  managed_by_env?: boolean;
 }
 
 export interface ApiKeyCreatedOut extends ApiKeyOut {
@@ -598,6 +599,8 @@ export interface SSOSettingsOut {
   configured: boolean;
   oidc_discovery_url: string;
   updated_at: string | null;
+  managed_by_env?: boolean;
+  env_vars?: string[];
 }
 
 export interface SSOSettingsUpdate {
@@ -752,4 +755,24 @@ export interface ODataPreviewResponse {
   '@odata.count'?: number;
   '@odata.nextLink'?: string;
   value: Array<Record<string, unknown>>;
+}
+
+export interface AuthUserOut {
+  id: string;
+  email: string;
+  display_name: string;
+  role_id: string;
+  role_name: string;
+  permissions: PermissionKey[];
+  is_admin: boolean;
+  photo_url: string;
+  auth_provider: UserAuthProvider;
+}
+
+export interface AuthMeOut {
+  authenticated: boolean;
+  auth_required: boolean;
+  sso_enabled: boolean;
+  provider: SSOProvider;
+  user: AuthUserOut | null;
 }

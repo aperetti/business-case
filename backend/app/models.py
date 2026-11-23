@@ -838,6 +838,7 @@ class ApiKeyOut(BaseModel):
     key_last4: str
     created_at: str
     last_used_at: str | None = None
+    managed_by_env: bool = False
 
 
 class ApiKeyCreatedOut(ApiKeyOut):
@@ -1099,6 +1100,8 @@ class SSOSettingsOut(BaseModel):
     configured: bool
     oidc_discovery_url: str
     updated_at: str | None = None
+    managed_by_env: bool = False
+    env_vars: list[str] = Field(default_factory=list)
 
 
 class SSOPublicConfigOut(BaseModel):
@@ -1296,6 +1299,30 @@ class UserOut(BaseModel):
     last_login_at: str | None = None
     created_at: str
     updated_at: str
+
+
+class AuthUserOut(BaseModel):
+    """Authenticated user session profile with resolved RBAC permissions."""
+
+    id: str
+    email: str
+    display_name: str
+    role_id: str
+    role_name: str
+    permissions: list[str]
+    is_admin: bool
+    photo_url: str = ""
+    auth_provider: UserAuthProvider
+
+
+class AuthMeOut(BaseModel):
+    """Session introspection response returned by GET /api/auth/me."""
+
+    authenticated: bool
+    auth_required: bool
+    sso_enabled: bool
+    provider: SSOProvider
+    user: AuthUserOut | None = None
 
 
 class ODataEntitySetSummary(BaseModel):

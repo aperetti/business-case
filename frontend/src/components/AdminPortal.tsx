@@ -3,6 +3,7 @@ import {
   ActionIcon,
   Alert,
   Autocomplete,
+  Badge,
   Button,
   Checkbox,
   Code,
@@ -35,6 +36,7 @@ import {
   IconDatabaseExport,
   IconFingerprint,
   IconKey,
+  IconLock,
   IconPlugConnected,
   IconRefresh,
   IconShieldCheck,
@@ -162,6 +164,9 @@ export function AdminPortal({
   const [ssoSaveError, setSsoSaveError] = useState<string | null>(null);
   const [ssoTesting, setSsoTesting] = useState(false);
   const [ssoTestResult, setSsoTestResult] = useState<SSOTestResponse | null>(null);
+
+  const ssoLocked = Boolean(ssoSettings?.managed_by_env);
+  const apiKeysLocked = apiKeys.some((k) => Boolean(k.managed_by_env));
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -306,7 +311,7 @@ export function AdminPortal({
 
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKeyName.trim()) return;
+    if (!newKeyName.trim() || apiKeysLocked) return;
     setKeysError(null);
     setCreatingKey(true);
     try {
@@ -339,6 +344,7 @@ export function AdminPortal({
 
   const handleSaveSSO = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (ssoLocked) return;
     setSsoSaveError(null);
     setSsoSaving(true);
     try {
@@ -714,6 +720,11 @@ export function AdminPortal({
               </Text>
             </div>
             <Group gap={6} wrap="nowrap">
+              {ssoLocked && (
+                <Badge size="xs" variant="light" color="blue" leftSection={<IconLock size={11} />}>
+                  Managed by Env
+                </Badge>
+              )}
               <span
                 className="status-dot"
                 style={{
@@ -731,6 +742,24 @@ export function AdminPortal({
             </Group>
           </Group>
 
+          {ssoLocked && (
+            <Alert color="blue" variant="light" icon={<IconLock size={16} />} title="Locked by Environment Variables">
+              <Stack gap={6}>
+                <Text size="xs">
+                  SSO authentication is configured via environment variables and cannot be edited in the Admin Portal.
+                  Update your <Code>.env</Code> file and restart the server to make changes.
+                </Text>
+                {(ssoSettings?.env_vars?.length ?? 0) > 0 && (
+                  <Group gap={6} wrap="wrap">
+                    {ssoSettings?.env_vars?.map((name) => (
+                      <Code key={name}>{name}</Code>
+                    ))}
+                  </Group>
+                )}
+              </Stack>
+            </Alert>
+          )}
+
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" style={{ alignItems: 'center' }}>
             <div>
               <Text size="xs" fw={500} c="var(--text-body)" mb={4}>
@@ -738,6 +767,7 @@ export function AdminPortal({
               </Text>
               <SegmentedControl
                 fullWidth={isMobile}
+                disabled={ssoLocked}
                 value={ssoProvider}
                 onChange={(val) => {
                   setSsoProvider((val as SSOProvider) || 'firebase');
@@ -754,6 +784,7 @@ export function AdminPortal({
             <Group gap="md" wrap="wrap">
               <Switch
                 checked={ssoEnabled}
+                disabled={ssoLocked}
                 onChange={(e) => {
                   const checked = e.currentTarget.checked;
                   setSsoEnabled(checked);
@@ -763,7 +794,7 @@ export function AdminPortal({
               />
               <Switch
                 checked={enforceSso}
-                disabled={!ssoEnabled}
+                disabled={ssoLocked || !ssoEnabled}
                 onChange={(e) => setEnforceSso(e.currentTarget.checked)}
                 label="Require SSO for app access"
               />
@@ -782,6 +813,7 @@ export function AdminPortal({
                 <TextInput
                   label="Firebase Project ID"
                   placeholder="my-bca-project"
+                  disabled={ssoLocked}
                   value={fbProjectId}
                   onChange={(e) => {
                     const next = e.currentTarget.value;
@@ -795,24 +827,28 @@ export function AdminPortal({
                 <TextInput
                   label="Auth Domain"
                   placeholder="my-bca-project.firebaseapp.com"
+                  disabled={ssoLocked}
                   value={fbAuthDomain}
                   onChange={(e) => setFbAuthDomain(e.currentTarget.value)}
                 />
                 <TextInput
                   label="Web API Key"
                   placeholder="AIzaSy..."
+                  disabled={ssoLocked}
                   value={fbApiKey}
                   onChange={(e) => setFbApiKey(e.currentTarget.value)}
                 />
                 <TextInput
                   label="Web App ID (optional)"
                   placeholder="1:1234567890:web:abc123"
+                  disabled={ssoLocked}
                   value={fbAppId}
                   onChange={(e) => setFbAppId(e.currentTarget.value)}
                 />
                 <TextInput
                   label="Identity Platform Tenant ID (optional)"
                   placeholder="Leave blank for single-tenant project"
+                  disabled={ssoLocked}
                   value={fbTenantId}
                   onChange={(e) => setFbTenantId(e.currentTarget.value)}
                 />
@@ -828,7 +864,7 @@ export function AdminPortal({
               >
                 <Group gap="md" wrap="wrap" mt={6}>
                   {FIREBASE_METHOD_OPTIONS.map((opt) => (
-                    <Checkbox key={opt.value} value={opt.value} label={opt.label} size="sm" />
+                    <Checkbox key={opt.value} value={opt.value} label={opt.label} size="sm" disabled={ssoLocked} />
                   ))}
                 </Group>
               </Checkbox.Group>
@@ -851,12 +887,14 @@ export function AdminPortal({
                 <TextInput
                   label="Directory (Tenant) ID"
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  disabled={ssoLocked}
                   value={entraTenantId}
                   onChange={(e) => setEntraTenantId(e.currentTarget.value)}
                 />
                 <TextInput
                   label="Application (Client) ID"
                   placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  disabled={ssoLocked}
                   value={entraClientId}
                   onChange={(e) => setEntraClientId(e.currentTarget.value)}
                 />
@@ -864,18 +902,22 @@ export function AdminPortal({
                   <PasswordInput
                     label="Client Secret (optional for SPA PKCE)"
                     description={
-                      clearEntraSecret
-                        ? 'Saved client secret will be cleared on Save.'
-                        : ssoSettings?.entra_client_secret_set
-                          ? `Saved secret: ${ssoSettings.entra_client_secret_masked} — leave blank to keep existing`
-                          : 'Leave blank for public SPA PKCE flows; required only for confidential server exchange.'
+                      ssoLocked
+                        ? ssoSettings?.entra_client_secret_set
+                          ? `Configured via ENTRA_CLIENT_SECRET (${ssoSettings.entra_client_secret_masked})`
+                          : 'Not set in environment.'
+                        : clearEntraSecret
+                          ? 'Saved client secret will be cleared on Save.'
+                          : ssoSettings?.entra_client_secret_set
+                            ? `Saved secret: ${ssoSettings.entra_client_secret_masked} — leave blank to keep existing`
+                            : 'Leave blank for public SPA PKCE flows; required only for confidential server exchange.'
                     }
                     placeholder={ssoSettings?.entra_client_secret_set ? '•••••••• (unchanged)' : 'Optional client secret'}
                     value={entraSecretInput}
-                    disabled={clearEntraSecret}
+                    disabled={ssoLocked || clearEntraSecret}
                     onChange={(e) => setEntraSecretInput(e.currentTarget.value)}
                   />
-                  {ssoSettings?.entra_client_secret_set && (
+                  {!ssoLocked && ssoSettings?.entra_client_secret_set && (
                     <Button
                       type="button"
                       size="compact-xs"
@@ -893,6 +935,7 @@ export function AdminPortal({
                 </div>
                 <Select
                   label="Cloud Authority Host"
+                  disabled={ssoLocked}
                   data={ENTRA_CLOUD_OPTIONS}
                   value={entraAuthorityHost}
                   onChange={(v) => setEntraAuthorityHost(v || 'https://login.microsoftonline.com')}
@@ -901,12 +944,14 @@ export function AdminPortal({
                 <TextInput
                   label="Redirect URI"
                   placeholder={`${gatewayOrigin}/auth/callback`}
+                  disabled={ssoLocked}
                   value={entraRedirectUri}
                   onChange={(e) => setEntraRedirectUri(e.currentTarget.value)}
                 />
                 <TextInput
                   label="OIDC Scopes"
                   placeholder="openid profile email"
+                  disabled={ssoLocked}
                   value={entraScopes}
                   onChange={(e) => setEntraScopes(e.currentTarget.value)}
                 />
@@ -930,12 +975,14 @@ export function AdminPortal({
             <TextInput
               label="Allowed Email Domains (comma-separated, optional)"
               placeholder="company.com, subsidiary.org"
+              disabled={ssoLocked}
               value={allowedDomainsText}
               onChange={(e) => setAllowedDomainsText(e.currentTarget.value)}
             />
             <TextInput
               label="Admin Role Emails (comma-separated, optional)"
               placeholder="admin@company.com, lead@company.com"
+              disabled={ssoLocked}
               value={adminEmailsText}
               onChange={(e) => setAdminEmailsText(e.currentTarget.value)}
             />
@@ -981,8 +1028,13 @@ export function AdminPortal({
             >
               Test SSO Discovery
             </Button>
-            <Button type="submit" loading={ssoSaving}>
-              Save SSO Settings
+            <Button
+              type="submit"
+              loading={ssoSaving}
+              disabled={ssoLocked}
+              leftSection={ssoLocked ? <IconLock size={14} /> : undefined}
+            >
+              {ssoLocked ? 'Locked by Environment' : 'Save SSO Settings'}
             </Button>
           </Group>
         </Stack>
@@ -1005,12 +1057,22 @@ export function AdminPortal({
             {curlExample}
           </Code>
 
+          {apiKeysLocked && (
+            <Alert color="blue" variant="light" icon={<IconLock size={16} />} title="Locked by Environment (BCA_API_KEYS)">
+              <Text size="xs">
+                Inbound API keys for <Code>/v1/*</Code> and <Code>/odata/*</Code> are managed via the{' '}
+                <Code>BCA_API_KEYS</Code> environment variable. Creating or revoking keys in the Admin Portal is disabled.
+              </Text>
+            </Alert>
+          )}
+
           <BoxCreateKeyForm
             newKeyName={newKeyName}
             setNewKeyName={setNewKeyName}
             creatingKey={creatingKey}
             onSubmit={handleCreateKey}
             isMobile={isMobile}
+            disabled={apiKeysLocked}
           />
 
           {keysError && (
@@ -1062,20 +1124,26 @@ export function AdminPortal({
                         {k.name}
                       </Text>
                       <Text size="xs" ff="monospace" c="var(--text-muted)">
-                        {k.key_prefix}••••{k.key_last4}
+                        {k.key_prefix || k.key_last4 ? `${k.key_prefix}••••${k.key_last4}` : '••••'}
                       </Text>
                       <Text size="xs" c="var(--text-muted)">
                         Last used: {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'Never'}
                       </Text>
                     </div>
-                    <Button
-                      type="button"
-                      size="compact-xs"
-                      variant="default"
-                      onClick={() => handleDeleteKey(k.id)}
-                    >
-                      Revoke
-                    </Button>
+                    {k.managed_by_env ? (
+                      <Badge size="xs" variant="light" color="blue" leftSection={<IconLock size={10} />}>
+                        Env
+                      </Badge>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="compact-xs"
+                        variant="default"
+                        onClick={() => handleDeleteKey(k.id)}
+                      >
+                        Revoke
+                      </Button>
+                    )}
                   </Group>
                 </Fragment>
               ))}
@@ -1097,23 +1165,31 @@ export function AdminPortal({
                     <Table.Tr key={k.id}>
                       <Table.Td fw={600}>{k.name}</Table.Td>
                       <Table.Td ff="monospace">
-                        {k.key_prefix}••••{k.key_last4}
+                        {k.key_prefix || k.key_last4 ? `${k.key_prefix}••••${k.key_last4}` : '••••'}
                       </Table.Td>
-                      <Table.Td>{new Date(k.created_at).toLocaleDateString()}</Table.Td>
+                      <Table.Td>
+                        {k.managed_by_env ? 'Managed via env' : new Date(k.created_at).toLocaleDateString()}
+                      </Table.Td>
                       <Table.Td>
                         {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'Never'}
                       </Table.Td>
                       <Table.Td ta="right">
-                        <ActionIcon
-                          type="button"
-                          variant="subtle"
-                          color="gray"
-                          size="sm"
-                          aria-label={`Revoke key ${k.name}`}
-                          onClick={() => handleDeleteKey(k.id)}
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
+                        {k.managed_by_env ? (
+                          <Badge size="xs" variant="light" color="blue" leftSection={<IconLock size={10} />}>
+                            Env
+                          </Badge>
+                        ) : (
+                          <ActionIcon
+                            type="button"
+                            variant="subtle"
+                            color="gray"
+                            size="sm"
+                            aria-label={`Revoke key ${k.name}`}
+                            onClick={() => handleDeleteKey(k.id)}
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        )}
                       </Table.Td>
                     </Table.Tr>
                   ))}
@@ -1194,20 +1270,23 @@ function BoxCreateKeyForm({
   creatingKey,
   onSubmit,
   isMobile,
+  disabled = false,
 }: {
   newKeyName: string;
   setNewKeyName: (v: string) => void;
   creatingKey: boolean;
   onSubmit: (e: React.FormEvent) => void;
   isMobile: boolean;
+  disabled?: boolean;
 }) {
   return (
     <form onSubmit={onSubmit}>
       <Group gap="xs" wrap="wrap" align="flex-end">
         <TextInput
           label="Issue Inbound Client Key"
-          placeholder="Key label (e.g., Internal Bot)"
+          placeholder={disabled ? 'Locked by BCA_API_KEYS' : 'Key label (e.g., Internal Bot)'}
           value={newKeyName}
+          disabled={disabled}
           onChange={(e) => setNewKeyName(e.currentTarget.value)}
           style={{ flex: '1 1 200px', minWidth: 0, width: isMobile ? '100%' : undefined }}
           required
@@ -1218,9 +1297,10 @@ function BoxCreateKeyForm({
           variant="default"
           fullWidth={isMobile}
           loading={creatingKey}
-          leftSection={<IconKey size={14} />}
+          disabled={disabled}
+          leftSection={disabled ? <IconLock size={14} /> : <IconKey size={14} />}
         >
-          Generate Key
+          {disabled ? 'Locked by Env' : 'Generate Key'}
         </Button>
       </Group>
     </form>

@@ -7,6 +7,11 @@ services:
       dockerfile: Dockerfile
       network: host
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.prod
+        required: false
     environment:
       DATABASE_PATH: /data/bca.db
       CORS_ORIGINS: '["http://192.168.0.190:8094","http://localhost:8094"]'
@@ -41,6 +46,11 @@ services:
       dockerfile: Dockerfile
       network: host
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.qa
+        required: false
     environment:
       DATABASE_PATH: /data/bca.db
       CORS_ORIGINS: '["http://192.168.0.190:8095","http://localhost:8095"]'

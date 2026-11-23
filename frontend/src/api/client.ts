@@ -1,6 +1,7 @@
 import type {
   ApiKeyCreatedOut,
   ApiKeyOut,
+  AuthMeOut,
   BCACompareRequest,
   BCAComparisonRecord,
   BCAComparisonResult,
@@ -50,6 +51,17 @@ import type {
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
+type AuthTokenProvider = (forceRefresh?: boolean) => Promise<string | null>;
+let authTokenProvider: AuthTokenProvider | null = null;
+
+export function setAuthTokenProvider(provider: AuthTokenProvider | null): void {
+  authTokenProvider = provider;
+}
+
+function shouldAttachAuthHeader(path: string): boolean {
+  return path !== '/health' && path !== '/api/auth/sso/public';
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -86,14 +98,39 @@ function extractErrorMessage(body: unknown, status: number): string {
   return `Request failed with status ${status}`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function buildRequestHeaders(
+  path: string,
+  extraHeaders?: HeadersInit,
+  forceRefreshToken = false
+): Promise<Headers> {
+  const headers = new Headers(extraHeaders);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (authTokenProvider && shouldAttachAuthHeader(path)) {
+    const token = await authTokenProvider(forceRefreshToken);
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+  }
+  return headers;
+}
+
+async function request<T>(path: string, init?: RequestInit, hasRetried = false): Promise<T> {
+  const headers = await buildRequestHeaders(path, init?.headers, hasRetried);
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
+    headers,
   });
+
+  if (
+    res.status === 401 &&
+    !hasRetried &&
+    authTokenProvider &&
+    shouldAttachAuthHeader(path)
+  ) {
+    return request<T>(path, init, true);
+  }
 
   if (res.status === 204) {
     return undefined as T;
@@ -292,6 +329,8 @@ export const api = {
 
   getSSOPublicConfig: () => request<SSOPublicConfigOut>('/api/auth/sso/public'),
 
+  getAuthMe: () => request<AuthMeOut>('/api/auth/me'),
+
   listRoles: () => request<RoleOut[]>('/api/admin/roles'),
 
   createRole: (payload: RoleCreate) =>
@@ -369,12 +408,24 @@ export const api = {
       signal?: AbortSignal;
     }
   ): Promise<{ content: string; citations: DocCitation[] }> => {
-    const res = await fetch(`${API_BASE}/api/docs-agent/chat/completions`, {
+    const path = '/api/docs-agent/chat/completions';
+    let headers = await buildRequestHeaders(path, undefined, false);
+    let res = await fetch(`${API_BASE}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ ...payload, stream: payload.stream ?? true }),
       signal: handlers.signal,
     });
+
+    if (res.status === 401 && authTokenProvider) {
+      headers = await buildRequestHeaders(path, undefined, true);
+      res = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ...payload, stream: payload.stream ?? true }),
+        signal: handlers.signal,
+      });
+    }
 
     if (!res.ok) {
       let parsed: unknown = null;

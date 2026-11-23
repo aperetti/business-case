@@ -3,12 +3,15 @@ import {
   ActionIcon,
   Alert,
   AppShell,
+  Avatar,
+  Badge,
   Burger,
   Button,
   Center,
   Drawer,
   Group,
   Loader,
+  Menu,
   Paper,
   Stack,
   Tabs,
@@ -26,6 +29,8 @@ import {
   IconBooks,
   IconChartHistogram,
   IconLayoutDashboard,
+  IconLogin,
+  IconLogout,
   IconMessageCircle,
   IconMoon,
   IconPlayerPlay,
@@ -33,7 +38,14 @@ import {
   IconSettings,
   IconSun,
 } from '@tabler/icons-react';
-import { api } from './api/client';
+import { onAuthStateChanged, type Auth } from 'firebase/auth';
+import { api, ApiError, setAuthTokenProvider } from './api/client';
+import {
+  consumeFirebaseRedirect,
+  formatFirebaseAuthError,
+  getFirebaseAuthInstance,
+  signOutFirebase,
+} from './auth/firebase';
 import { AdminPortal } from './components/AdminPortal';
 import { AdminSidebar } from './components/AdminSidebar';
 import { BCAComparisonDashboard } from './components/BCAComparisonDashboard';
@@ -46,9 +58,11 @@ import { InitiativeSettingsBar } from './components/InitiativeSettingsBar';
 import { InitiativeSidebar } from './components/InitiativeSidebar';
 import { LineItemDrawer } from './components/LineItemDrawer';
 import { LineItemsTable } from './components/LineItemsTable';
+import { LoginGate } from './components/LoginGate';
 import { MonteCarloDashboard } from './components/MonteCarloDashboard';
 import type {
   AdminSection,
+  AuthUserOut,
   BCACompareRequest,
   BCAComparisonRecord,
   BCAComparisonResult,
@@ -63,6 +77,7 @@ import type {
   InitiativeSummary,
   InitiativeUpdate,
   LLMSettingsOut,
+  SSOPublicConfigOut,
   SimulationRequest,
   SimulationResult,
   SimulationRunRecord,
@@ -117,6 +132,16 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dbHealthy, setDbHealthy] = useState<boolean>(true);
   const [llmSettings, setLlmSettings] = useState<LLMSettingsOut | null>(null);
+
+  const [authPhase, setAuthPhase] = useState<
+    'checking' | 'unauthenticated' | 'unauthorized' | 'ready'
+  >('checking');
+  const [ssoPublic, setSsoPublic] = useState<SSOPublicConfigOut | null>(null);
+  const [firebaseAuth, setFirebaseAuth] = useState<Auth | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUserOut | null>(null);
+  const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [showOptionalLoginModal, setShowOptionalLoginModal] = useState(false);
 
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [initiatives, setInitiatives] = useState<InitiativeSummary[]>([]);
@@ -198,8 +223,119 @@ export default function App() {
   }, [refreshInitiativeData]);
 
   useEffect(() => {
-    bootstrap();
-  }, [bootstrap]);
+    let cancelled = false;
+    let unsubscribeAuth: (() => void) | null = null;
+
+    const initAuth = async () => {
+      try {
+        const pub = await api.getSSOPublicConfig();
+        if (cancelled) return;
+        setSsoPublic(pub);
+
+        const ssoActive = pub.enabled && pub.configured && pub.provider === 'firebase';
+        if (!ssoActive) {
+          setAuthTokenProvider(null);
+          setAuthPhase('ready');
+          return;
+        }
+
+        const fbAuth = getFirebaseAuthInstance(pub);
+        if (cancelled) return;
+        setFirebaseAuth(fbAuth);
+
+        setAuthTokenProvider(async (forceRefresh = false) => {
+          const current = fbAuth.currentUser;
+          if (!current) return null;
+          return current.getIdToken(forceRefresh);
+        });
+
+        try {
+          await consumeFirebaseRedirect(fbAuth);
+        } catch (err) {
+          if (!cancelled) {
+            setAuthError(formatFirebaseAuthError(err));
+          }
+        }
+
+        unsubscribeAuth = onAuthStateChanged(fbAuth, async (fbUser) => {
+          if (cancelled) return;
+          setAuthError(null);
+          if (!fbUser) {
+            setAuthUser(null);
+            setSignedInEmail(null);
+            setAdminMode(false);
+            setAuthPhase(pub.enforce_sso ? 'unauthenticated' : 'ready');
+            return;
+          }
+
+          setSignedInEmail(fbUser.email);
+          try {
+            const me = await api.getAuthMe();
+            if (cancelled) return;
+            setAuthUser(me.user);
+            setShowOptionalLoginModal(false);
+            setAuthPhase('ready');
+          } catch (err) {
+            if (cancelled) return;
+            setAuthUser(null);
+            if (err instanceof ApiError && err.status === 403) {
+              setAuthError(err.message);
+              if (pub.enforce_sso) {
+                setAuthPhase('unauthorized');
+              } else {
+                setAuthPhase('ready');
+                notifications.show({
+                  color: 'red',
+                  title: 'Sign-in restricted',
+                  message: err.message,
+                });
+              }
+            } else if (err instanceof ApiError && err.status === 401) {
+              setAuthError(err.message);
+              setAuthPhase(pub.enforce_sso ? 'unauthenticated' : 'ready');
+            } else {
+              setAuthError(
+                err instanceof Error ? err.message : 'Authentication check failed.'
+              );
+              setAuthPhase(pub.enforce_sso ? 'unauthorized' : 'ready');
+            }
+          }
+        });
+      } catch {
+        if (!cancelled) {
+          setAuthTokenProvider(null);
+          setAuthPhase('ready');
+        }
+      }
+    };
+
+    initAuth();
+    return () => {
+      cancelled = true;
+      if (unsubscribeAuth) unsubscribeAuth();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authPhase === 'ready') {
+      bootstrap();
+    }
+  }, [authPhase, authUser?.id, bootstrap]);
+
+  useEffect(() => {
+    if (
+      ssoPublic?.enabled &&
+      ssoPublic?.enforce_sso &&
+      ssoPublic?.configured &&
+      !authUser?.is_admin &&
+      adminMode
+    ) {
+      setAdminMode(false);
+      if (window.location.hash.startsWith('#admin')) {
+        window.history.pushState(null, '', window.location.pathname + window.location.search);
+      }
+    }
+  }, [ssoPublic, authUser, adminMode]);
 
   useEffect(() => {
     const active = document.querySelector<HTMLElement>('.tabs-scroll-list [data-active="true"]');
@@ -281,6 +417,22 @@ export default function App() {
     }
     window.scrollTo({ top: 0 });
   }, [activeTab, activeDocSlug, closeNav]);
+
+  const handleSignOut = useCallback(async () => {
+    if (firebaseAuth) {
+      await signOutFirebase(firebaseAuth);
+    }
+    setAuthUser(null);
+    setSignedInEmail(null);
+    setAuthError(null);
+    setAdminMode(false);
+    setInitiativeDetail(null);
+    setInitiatives([]);
+    setSelectedId(null);
+    if (window.location.hash.startsWith('#admin')) {
+      window.history.pushState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [firebaseAuth]);
 
   const handleTabChange = useCallback((value: string | null) => {
     const next = value || 'assumptions';
@@ -641,6 +793,49 @@ export default function App() {
     return Array.from(set);
   }, [initiativeDetail]);
 
+  const authRequired = Boolean(ssoPublic?.enabled && ssoPublic?.configured && ssoPublic?.enforce_sso);
+  const canAccessAdmin = !authRequired || Boolean(authUser?.is_admin);
+
+  if (authPhase === 'checking') {
+    return (
+      <Center mih="100dvh" style={{ backgroundColor: 'var(--bg-canvas)' }}>
+        <Stack align="center" gap="xs">
+          <Loader size="md" />
+          <Text size="sm" c="var(--text-muted)">
+            Checking authentication...
+          </Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  if ((authPhase === 'unauthenticated' || authPhase === 'unauthorized') && ssoPublic) {
+    return (
+      <LoginGate
+        ssoConfig={ssoPublic}
+        firebaseAuth={firebaseAuth}
+        mode={authPhase === 'unauthorized' ? 'unauthorized' : 'unauthenticated'}
+        signedInEmail={signedInEmail}
+        errorMessage={authError}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  if (showOptionalLoginModal && ssoPublic) {
+    return (
+      <LoginGate
+        ssoConfig={ssoPublic}
+        firebaseAuth={firebaseAuth}
+        mode="unauthenticated"
+        signedInEmail={signedInEmail}
+        errorMessage={authError}
+        onSignOut={handleSignOut}
+        onDismissOptional={() => setShowOptionalLoginModal(false)}
+      />
+    );
+  }
+
   return (
     <AppShell
       header={{ height: 56 }}
@@ -757,37 +952,117 @@ export default function App() {
               </Button>
             )}
 
-            {adminMode ? (
-              <Button
-                type="button"
-                size="xs"
-                variant="default"
-                leftSection={<IconArrowLeft size={13} />}
-                onClick={handleExitAdmin}
-              >
-                {isMobile ? 'Exit' : 'Workspace'}
-              </Button>
-            ) : isMobile ? (
-              <ActionIcon
-                type="button"
-                variant="default"
-                size="sm"
-                aria-label="Admin Portal"
-                title="Admin Portal"
-                onClick={() => handleOpenAdmin(adminSection)}
-              >
-                <IconSettings size={16} color="var(--text-body)" />
-              </ActionIcon>
+            {canAccessAdmin && (
+              adminMode ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="default"
+                  leftSection={<IconArrowLeft size={13} />}
+                  onClick={handleExitAdmin}
+                >
+                  {isMobile ? 'Exit' : 'Workspace'}
+                </Button>
+              ) : isMobile ? (
+                <ActionIcon
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  aria-label="Admin Portal"
+                  title="Admin Portal"
+                  onClick={() => handleOpenAdmin(adminSection)}
+                >
+                  <IconSettings size={16} color="var(--text-body)" />
+                </ActionIcon>
+              ) : (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="default"
+                  leftSection={<IconSettings size={13} />}
+                  onClick={() => handleOpenAdmin(adminSection)}
+                >
+                  Admin
+                </Button>
+              )
+            )}
+
+            {authUser ? (
+              <Menu shadow="md" width={230} position="bottom-end">
+                <Menu.Target>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    px={6}
+                    leftSection={
+                      <Avatar
+                        src={authUser.photo_url || null}
+                        size={20}
+                        radius="xl"
+                        color="blue"
+                      >
+                        {(authUser.display_name || authUser.email || 'U').slice(0, 1).toUpperCase()}
+                      </Avatar>
+                    }
+                  >
+                    {!isMobile && (
+                      <Text size="xs" fw={500} c="var(--text-heading)" lineClamp={1} maw={130}>
+                        {authUser.display_name || authUser.email}
+                      </Text>
+                    )}
+                  </Button>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Label>
+                    <Stack gap={2}>
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        <Text size="xs" fw={600} c="var(--text-heading)" lineClamp={1}>
+                          {authUser.display_name}
+                        </Text>
+                        <Badge size="xs" variant="light" color={authUser.is_admin ? 'teal' : 'blue'}>
+                          {authUser.role_name}
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="var(--text-muted)" lineClamp={1}>
+                        {authUser.email}
+                      </Text>
+                    </Stack>
+                  </Menu.Label>
+                  <Menu.Divider />
+                  {canAccessAdmin && !adminMode && (
+                    <Menu.Item
+                      leftSection={<IconSettings size={14} />}
+                      onClick={() => handleOpenAdmin(adminSection)}
+                    >
+                      Admin Portal
+                    </Menu.Item>
+                  )}
+                  <Menu.Item
+                    color="red"
+                    leftSection={<IconLogout size={14} />}
+                    onClick={handleSignOut}
+                  >
+                    Sign Out
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
             ) : (
-              <Button
-                type="button"
-                size="xs"
-                variant="default"
-                leftSection={<IconSettings size={13} />}
-                onClick={() => handleOpenAdmin(adminSection)}
-              >
-                Admin
-              </Button>
+              ssoPublic?.enabled &&
+              ssoPublic?.configured &&
+              !ssoPublic.enforce_sso &&
+              ssoPublic.provider === 'firebase' && (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconLogin size={13} />}
+                  onClick={() => setShowOptionalLoginModal(true)}
+                >
+                  {isMobile ? 'Sign In' : 'Sign In'}
+                </Button>
+              )
             )}
           </Group>
         </Group>

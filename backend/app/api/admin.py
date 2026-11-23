@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from app.core.auth import AuthError, authenticate_request
 from app.core.docs_kb import GUIDE_KB_ENTRIES
 from app.core.llm_client import UpstreamLLMError, fetch_upstream_models, test_upstream_connection
 from app.core.odata import ODataError, execute_odata_query, get_odata_entity_summaries
 from app.core.sso_client import test_sso_discovery
 from app.db.repository import (
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     ValidationError,
     count_inbound_api_keys,
@@ -37,6 +39,7 @@ from app.models import (
     ApiKeyCreate,
     ApiKeyCreatedOut,
     ApiKeyOut,
+    AuthMeOut,
     KBStatusOut,
     LLMModelsFetchRequest,
     LLMModelsFetchResponse,
@@ -142,7 +145,10 @@ def get_admin_api_keys(request: Request) -> list[ApiKeyOut]:
 @router.post("/api-keys", response_model=ApiKeyCreatedOut, status_code=status.HTTP_201_CREATED)
 def post_admin_api_key(payload: ApiKeyCreate, request: Request) -> ApiKeyCreatedOut:
     """Create and hash a new inbound API key, returning the secret once."""
-    return create_api_key(request.app.state.db_path, payload.name)
+    try:
+        return create_api_key(request.app.state.db_path, payload.name)
+    except ConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -150,6 +156,8 @@ def delete_admin_api_key(key_id: str, request: Request) -> None:
     """Revoke an inbound API key."""
     try:
         delete_api_key(request.app.state.db_path, key_id)
+    except ConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -181,34 +189,44 @@ def get_admin_sso_settings(request: Request) -> SSOSettingsOut:
 @router.put("/sso", response_model=SSOSettingsOut)
 def put_admin_sso_settings(payload: SSOSettingsUpdate, request: Request) -> SSOSettingsOut:
     """Save Single Sign-On provider configuration (Firebase default or Microsoft Entra ID)."""
-    return update_sso_settings(request.app.state.db_path, payload)
+    try:
+        return update_sso_settings(request.app.state.db_path, payload)
+    except ConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.post("/sso/test", response_model=SSOTestResponse)
 async def post_admin_sso_test(payload: SSOTestRequest, request: Request) -> SSOTestResponse:
     """Verify OIDC discovery document reachability for Firebase or Microsoft Entra ID."""
     raw = get_sso_settings_raw(request.app.state.db_path)
-    eff_provider: SSOProvider = payload.provider or ("entra" if raw.get("provider") == "entra" else "firebase")
-    eff_fb_project = (
-        payload.firebase_project_id.strip()
-        if payload.firebase_project_id is not None
-        else str(raw.get("firebase_project_id") or "")
-    )
-    eff_entra_tenant = (
-        payload.entra_tenant_id.strip()
-        if payload.entra_tenant_id is not None
-        else str(raw.get("entra_tenant_id") or "")
-    )
-    eff_entra_client = (
-        payload.entra_client_id.strip()
-        if payload.entra_client_id is not None
-        else str(raw.get("entra_client_id") or "")
-    )
-    eff_entra_host = (
-        payload.entra_authority_host
-        if payload.entra_authority_host is not None
-        else str(raw.get("entra_authority_host") or "https://login.microsoftonline.com")
-    )
+    if raw.get("managed_by_env"):
+        eff_provider: SSOProvider = "entra" if raw.get("provider") == "entra" else "firebase"
+        eff_fb_project = str(raw.get("firebase_project_id") or "").strip()
+        eff_entra_tenant = str(raw.get("entra_tenant_id") or "").strip()
+        eff_entra_client = str(raw.get("entra_client_id") or "").strip()
+        eff_entra_host = str(raw.get("entra_authority_host") or "https://login.microsoftonline.com")
+    else:
+        eff_provider = payload.provider or ("entra" if raw.get("provider") == "entra" else "firebase")
+        eff_fb_project = (
+            payload.firebase_project_id.strip()
+            if payload.firebase_project_id is not None
+            else str(raw.get("firebase_project_id") or "")
+        )
+        eff_entra_tenant = (
+            payload.entra_tenant_id.strip()
+            if payload.entra_tenant_id is not None
+            else str(raw.get("entra_tenant_id") or "")
+        )
+        eff_entra_client = (
+            payload.entra_client_id.strip()
+            if payload.entra_client_id is not None
+            else str(raw.get("entra_client_id") or "")
+        )
+        eff_entra_host = (
+            payload.entra_authority_host
+            if payload.entra_authority_host is not None
+            else str(raw.get("entra_authority_host") or "https://login.microsoftonline.com")
+        )
     return await test_sso_discovery(
         provider=eff_provider,
         firebase_project_id=eff_fb_project,
@@ -223,6 +241,34 @@ async def post_admin_sso_test(payload: SSOTestRequest, request: Request) -> SSOT
 def get_public_sso_config(request: Request) -> SSOPublicConfigOut:
     """Public client-safe SSO configuration for frontend authentication initialization."""
     return get_sso_public_config(request.app.state.db_path)
+
+
+@public_auth_router.get("/me", response_model=AuthMeOut)
+async def get_auth_me(request: Request) -> AuthMeOut:
+    """Validate the current Bearer token (when supplied) and return RBAC session metadata."""
+    try:
+        user, auth_required, sso_active, provider = await authenticate_request(
+            request, request.app.state.db_path
+        )
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    return AuthMeOut(
+        authenticated=user is not None,
+        auth_required=auth_required,
+        sso_enabled=sso_active,
+        provider=provider,
+        user=user,
+    )
 
 
 # --- Roles & Users Management ---

@@ -76,3 +76,13 @@ Build and start both environments:
 docker compose up -d --build
 docker compose ps
 ```
+
+### Environment-Managed Authentication (`.env`)
+
+By default, SSO settings and inbound API keys can be edited in the **Admin Portal** and persisted in SQLite. To lock configuration per environment without storing secrets in `bca.db`:
+
+1. Copy `.env.example` to `.env` (or `.env.prod` / `.env.qa` for separate Docker Compose stacks — all `.env*` files except `.env.example` are gitignored).
+2. Set any non-empty SSO variables (`SSO_ENABLED`, `SSO_PROVIDER`, `FIREBASE_*`, `ENTRA_*`, `SSO_ALLOWED_DOMAINS`, `SSO_ADMIN_EMAILS`) and/or `BCA_API_KEYS` (comma-separated or JSON array of keys for `/v1/*` and `/odata/*`).
+3. Restart the backend / containers (`docker compose up -d`).
+
+Whenever one or more env vars are active for SSO or API keys, environment values override SQLite at runtime and the corresponding Admin Portal controls become read-only (`409 Conflict` on write APIs) until those variables are unset.
