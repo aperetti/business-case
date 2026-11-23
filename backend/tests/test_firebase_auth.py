@@ -118,10 +118,20 @@ def test_firebase_enforced_auth_rbac_provisioning_and_exemptions(
     _install_mock_jwks(monkeypatch, jwks_payload)
     _enable_enforced_firebase_env(monkeypatch, admin_emails="adam.peretti@gmail.com")
 
-    # Public and API-key-governed endpoints remain reachable without Firebase Bearer token
+    # Public endpoints remain reachable without Firebase Bearer token
     assert seeded_client.get("/health").status_code == 200
     assert seeded_client.get("/api/auth/sso/public").status_code == 200
-    assert seeded_client.get("/odata/v4/Initiatives").status_code == 200
+
+    # With SSO enforced, the OData BI feed and /v1 gateway expose the same data as the
+    # UI, so they are no longer anonymously readable even when no API keys exist yet.
+    assert seeded_client.get("/odata/v4/Initiatives").status_code == 401
+    assert seeded_client.get("/odata/$metadata").status_code == 401
+    assert seeded_client.get("/v1/models").status_code == 401
+    monkeypatch.setenv("BCA_API_KEYS", "bca-static-test-key")
+    keyed = {"Authorization": "Bearer bca-static-test-key"}
+    assert seeded_client.get("/odata/v4/Initiatives", headers=keyed).status_code == 200
+    assert seeded_client.get("/v1/models", headers=keyed).status_code == 200
+    monkeypatch.delenv("BCA_API_KEYS")
 
     # Protected routes reject unauthenticated calls cleanly with 401
     assert seeded_client.get("/api/initiatives").status_code == 401

@@ -434,7 +434,9 @@ in
                 }}
               />
               <Text size="xs" c="var(--text-body)">
-                {statusData?.auth_mode === 'api_key_required'
+                {statusData?.auth_mode === 'api_key_required' && statusData.inbound_key_count === 0
+                  ? 'API Key Required (SSO is enforced). No keys issued yet: issue one in Gateway & API Keys to grant BI and gateway access.'
+                  : statusData?.auth_mode === 'api_key_required'
                   ? `API Key Authentication Enforced (${statusData.inbound_key_count} active key${
                       statusData.inbound_key_count === 1 ? '' : 's'
                     }) — accepts Bearer, Basic (key as username or password), or X-API-Key.`

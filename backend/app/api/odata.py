@@ -14,7 +14,7 @@ from app.core.odata import (
     execute_odata_query,
     odata_error_payload,
 )
-from app.db.repository import count_inbound_api_keys, verify_inbound_api_key
+from app.db.repository import inbound_open_access_allowed, verify_inbound_api_key
 
 ODATA_JSON_MEDIA_TYPE = "application/json; odata.metadata=minimal; charset=utf-8"
 _BASE_HEADERS = {"OData-Version": ODATA_VERSION}
@@ -53,7 +53,7 @@ def _extract_candidate_keys(request: Request) -> list[str]:
 
 def _require_odata_auth(request: Request) -> JSONResponse | None:
     db_path = request.app.state.db_path
-    if count_inbound_api_keys(db_path) == 0:
+    if inbound_open_access_allowed(db_path):
         return None
     for candidate in _extract_candidate_keys(request):
         if verify_inbound_api_key(db_path, candidate):
