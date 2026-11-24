@@ -236,6 +236,20 @@ def _format_catalog_summary_entry(entry: CatalogEntry) -> str:
         for p in entry.parameters
     )
     extra = CATALOG_KB_DETAILS.get(entry.id, "")
+    if entry.doc is not None and not entry.doc.is_template:
+        d = entry.doc.content
+        parts = [
+            d.headline,
+            f"What it measures: {d.what_it_measures}" if d.what_it_measures else "",
+            f"Economic rationale: {d.economic_rationale}" if d.economic_rationale else "",
+            ("When to use: " + "; ".join(d.when_to_use)) if d.when_to_use else "",
+            ("When not to use: " + "; ".join(a.text for a in d.when_not_to_use)) if d.when_not_to_use else "",
+            f"Formula in plain English: {d.formula_plain_english}" if d.formula_plain_english else "",
+            ("Guardrails: " + "; ".join(d.guardrail_notes)) if d.guardrail_notes else "",
+        ]
+        edited = " ".join(p for p in parts if p)
+        # Edited docs take precedence over shipped guidance for this template.
+        extra = edited or extra
     return (
         f"### {entry.id}: {entry.name} [{entry.kind.upper()}]\n"
         f"- Description: {entry.description or 'N/A'}\n"

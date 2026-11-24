@@ -53,6 +53,7 @@ import {
   formatRatio,
   formatYearLabel,
 } from '../utils/format';
+import { FieldInfo, FieldLabel } from './FieldInfo';
 
 interface Props {
   initiative: InitiativeDetail;
@@ -216,8 +217,9 @@ export function MonteCarloDashboard({
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
               <div>
                 <Group justify="space-between" mb={4}>
-                  <Text size="xs" fw={600} c="var(--text-body)">
+                  <Text size="xs" fw={600} c="var(--text-body)" className="field-label">
                     Simulation Iterations
+                    <FieldInfo field="mc.iterations" />
                   </Text>
                   <Text size="xs" fw={600} className="tabular-nums" c="var(--text-heading)">
                     {nSimulations.toLocaleString()}
@@ -240,7 +242,7 @@ export function MonteCarloDashboard({
               </div>
 
               <NumberInput
-                label="Random Seed (optional)"
+                label={<FieldLabel field="mc.seed">Random Seed (optional)</FieldLabel>}
                 description="Set fixed seed for reproducible runs"
                 placeholder="Random"
                 min={0}
@@ -250,7 +252,7 @@ export function MonteCarloDashboard({
               />
 
               <NumberInput
-                label="What-If Discount Rate (%)"
+                label={<FieldLabel field="mc.discount_override">What-If Discount Rate (%)</FieldLabel>}
                 description={`Initiative baseline: ${(initiative.discount_rate * 100).toFixed(1)}%`}
                 min={0}
                 max={50}
@@ -264,8 +266,9 @@ export function MonteCarloDashboard({
             <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
               <div>
                 <Group justify="space-between" mb={2}>
-                  <Text size="xs" fw={600} c="var(--text-body)">
+                  <Text size="xs" fw={600} c="var(--text-body)" className="field-label">
                     Uncertainty Spread Scale
+                    <FieldInfo field="mc.uncertainty_scale" />
                   </Text>
                   <Text size="xs" fw={600} className="tabular-nums" c="var(--text-heading)">
                     {uncertaintyScale.toFixed(2)}×
@@ -282,8 +285,9 @@ export function MonteCarloDashboard({
 
               <div>
                 <Group justify="space-between" mb={2}>
-                  <Text size="xs" fw={600} c="var(--text-body)">
+                  <Text size="xs" fw={600} c="var(--text-body)" className="field-label">
                     What-If Benefit Scale
+                    <FieldInfo field="mc.benefit_scale" />
                   </Text>
                   <Text size="xs" fw={600} className="tabular-nums" c="var(--text-heading)">
                     {benefitScale.toFixed(2)}×
@@ -300,8 +304,9 @@ export function MonteCarloDashboard({
 
               <div>
                 <Group justify="space-between" mb={2}>
-                  <Text size="xs" fw={600} c="var(--text-body)">
+                  <Text size="xs" fw={600} c="var(--text-body)" className="field-label">
                     What-If Cost Scale
+                    <FieldInfo field="mc.cost_scale" />
                   </Text>
                   <Text size="xs" fw={600} className="tabular-nums" c="var(--text-heading)">
                     {costScale.toFixed(2)}×

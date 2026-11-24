@@ -75,6 +75,7 @@ import {
   formatRatio,
   formatYearLabel,
 } from '../utils/format';
+import { FieldLabel } from './FieldInfo';
 
 interface Props {
   initiative: InitiativeDetail;
@@ -669,7 +670,7 @@ export function BCAComparisonDashboard({
                 style={{ flex: '1 1 220px', minWidth: 0 }}
               />
               <NumberInput
-                label="Iterations"
+                label={<FieldLabel field="mc.iterations">Iterations</FieldLabel>}
                 min={1000}
                 max={50000}
                 step={1000}
@@ -678,7 +679,7 @@ export function BCAComparisonDashboard({
                 w={{ base: '48%', sm: 130 }}
               />
               <NumberInput
-                label="Seed"
+                label={<FieldLabel field="mc.seed">Seed</FieldLabel>}
                 placeholder="Random"
                 min={0}
                 max={2147483647}
@@ -708,7 +709,7 @@ export function BCAComparisonDashboard({
                   </Group>
                   <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
                     <NumberInput
-                      label="Override Discount Rate (%)"
+                      label={<FieldLabel field="mc.discount_override">Override Discount Rate (%)</FieldLabel>}
                       placeholder="Use each BCA's rate"
                       min={0}
                       max={50}

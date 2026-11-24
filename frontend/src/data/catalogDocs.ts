@@ -1,4 +1,6 @@
+import { buildFieldReferencePage } from './fieldDocs';
 import type {
+  CatalogDocContent,
   CatalogEntry,
   CatalogKind,
   RampProfile,
@@ -11,6 +13,12 @@ export interface GuideTable {
 }
 
 export interface GuideSection {
+  /** Anchor id for deep links (#docs/<slug>#<id>). */
+  id?: string;
+  /** Small label above the heading (e.g. the form a field belongs to). */
+  eyebrow?: string;
+  /** Related pages, rendered as links at the end of the section. */
+  links?: { slug: string; label: string }[];
   heading: string;
   paragraphs?: string[];
   bullets?: string[];
@@ -73,6 +81,10 @@ export interface CatalogItemDoc {
   };
   guardrailDeepDive: string[];
   examples: WorkedExampleSpec[];
+  /** Auto-created page that still needs to be filled out. */
+  isTemplate?: boolean;
+  /** Content comes from an edit saved in the workspace (not the shipped docs). */
+  isEdited?: boolean;
 }
 
 export interface ComputedYearlyRow {
@@ -648,6 +660,9 @@ export const GUIDE_PAGES: GuideDocPage[] = [
     ],
   },
 ];
+
+// Generated from the per-field help registry so the popovers and this page never drift apart.
+GUIDE_PAGES.push(buildFieldReferencePage());
 
 export const CATALOG_ITEM_DOCS: Record<string, CatalogItemDoc> = {
   'COST-BUILD-01': {
@@ -1744,7 +1759,67 @@ export function buildCustomCatalogDoc(entry: CatalogEntry): CatalogItemDoc {
   };
 }
 
+function fromStoredDoc(entry: CatalogEntry, content: CatalogDocContent, isTemplate: boolean): CatalogItemDoc {
+  const shipped = CATALOG_ITEM_DOCS[entry.id];
+  const guidance: Record<string, ParameterGuidance> = {};
+  for (const [key, g] of Object.entries(content.parameter_guidance)) {
+    if (g.guidance || g.typical_range || g.data_source) {
+      guidance[key] = { guidance: g.guidance, typicalRange: g.typical_range, dataSource: g.data_source };
+    }
+  }
+  return {
+    id: entry.id,
+    headline: content.headline,
+    whatItMeasures: content.what_it_measures,
+    economicRationale: content.economic_rationale,
+    whenToUse: content.when_to_use,
+    whenNotToUse: content.when_not_to_use.map((a) => ({
+      text: a.text,
+      linkSlug: a.link_slug ?? undefined,
+      linkLabel: a.link_label ?? undefined,
+    })),
+    formulaPlainEnglish: content.formula_plain_english,
+    parameterGuidance: guidance,
+    modelingTips: { ...content.modeling_tips },
+    guardrailDeepDive: content.guardrail_notes,
+    // Worked examples are computed from parameters, not written prose: keep the shipped ones
+    // for built-ins and the default-parameter example for filled-out custom pages.
+    examples: shipped ? shipped.examples : isTemplate ? [] : buildCustomCatalogDoc(entry).examples,
+    isTemplate,
+    isEdited: !isTemplate,
+  };
+}
+
+/** Convert a rendered doc into the editable stored shape (used to pre-fill the editor). */
+export function toStoredDoc(entry: CatalogEntry, doc: CatalogItemDoc): CatalogDocContent {
+  const parameter_guidance: CatalogDocContent['parameter_guidance'] = {};
+  for (const p of entry.parameters) {
+    const g = doc.parameterGuidance[p.key];
+    parameter_guidance[p.key] = {
+      guidance: g?.guidance ?? '',
+      typical_range: g?.typicalRange ?? '',
+      data_source: g?.dataSource ?? '',
+    };
+  }
+  return {
+    headline: doc.headline,
+    what_it_measures: doc.whatItMeasures,
+    economic_rationale: doc.economicRationale,
+    when_to_use: [...doc.whenToUse],
+    when_not_to_use: doc.whenNotToUse.map((a) => ({
+      text: a.text,
+      link_slug: a.linkSlug ?? null,
+      link_label: a.linkLabel ?? null,
+    })),
+    formula_plain_english: doc.formulaPlainEnglish,
+    parameter_guidance,
+    modeling_tips: { ...doc.modelingTips },
+    guardrail_notes: [...doc.guardrailDeepDive],
+  };
+}
+
 export function getCatalogItemDoc(entry: CatalogEntry): CatalogItemDoc {
+  if (entry.doc) return fromStoredDoc(entry, entry.doc.content, entry.doc.is_template);
   return CATALOG_ITEM_DOCS[entry.id] || buildCustomCatalogDoc(entry);
 }
 

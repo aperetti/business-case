@@ -88,12 +88,102 @@ class CatalogEntryCreate(BaseModel):
         return self
 
 
+class CatalogEntryUpdate(BaseModel):
+    """Partial update of a catalog template. The ID cannot change."""
+
+    kind: CatalogKind | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    domains: list[str] | None = None
+    value_stream_stage: str | None = Field(default=None, max_length=80)
+    parameters: list[CatalogParameter] | None = Field(default=None, min_length=1)
+    formula_type: str | None = Field(default=None, min_length=1, max_length=500)
+    guardrail_notes: str | None = Field(default=None, max_length=1500)
+
+
+class CatalogDocAlternative(BaseModel):
+    """'When to use another template' entry, optionally linking to another docs page."""
+
+    text: str = Field(..., max_length=1000)
+    link_slug: str | None = Field(default=None, max_length=64)
+    link_label: str | None = Field(default=None, max_length=120)
+
+
+class CatalogDocParameterGuidance(BaseModel):
+    guidance: str = Field(default="", max_length=1500)
+    typical_range: str = Field(default="", max_length=300)
+    data_source: str = Field(default="", max_length=500)
+
+
+class CatalogDocModelingTips(BaseModel):
+    schedule: str = Field(default="", max_length=1500)
+    ramp: str = Field(default="", max_length=1500)
+    uncertainty: str = Field(default="", max_length=1500)
+    correlation: str = Field(default="", max_length=1500)
+
+
+class CatalogDocContent(BaseModel):
+    """Editable documentation page for a catalog template."""
+
+    headline: str = Field(default="", max_length=400)
+    what_it_measures: str = Field(default="", max_length=5000)
+    economic_rationale: str = Field(default="", max_length=5000)
+    when_to_use: list[str] = Field(default_factory=list, max_length=30)
+    when_not_to_use: list[CatalogDocAlternative] = Field(default_factory=list, max_length=30)
+    formula_plain_english: str = Field(default="", max_length=3000)
+    parameter_guidance: dict[str, CatalogDocParameterGuidance] = Field(default_factory=dict)
+    modeling_tips: CatalogDocModelingTips = Field(default_factory=CatalogDocModelingTips)
+    guardrail_notes: list[str] = Field(default_factory=list, max_length=30)
+
+    @field_validator("when_to_use", "guardrail_notes")
+    @classmethod
+    def clean_lines(cls, v: list[str]) -> list[str]:
+        cleaned = [line.strip() for line in v if line and line.strip()]
+        if any(len(line) > 1500 for line in cleaned):
+            raise ValueError("Each list item must be 1500 characters or fewer.")
+        return cleaned
+
+    @field_validator("when_not_to_use")
+    @classmethod
+    def clean_alternatives(cls, v: list[CatalogDocAlternative]) -> list[CatalogDocAlternative]:
+        return [a for a in v if a.text.strip()]
+
+    @field_validator("parameter_guidance")
+    @classmethod
+    def limit_guidance(cls, v: dict[str, CatalogDocParameterGuidance]) -> dict[str, CatalogDocParameterGuidance]:
+        if len(v) > 50:
+            raise ValueError("Too many parameter guidance entries.")
+        return v
+
+
+class CatalogDocUpdate(CatalogDocContent):
+    """Saving a doc page requires at least a headline and 'What it measures'."""
+
+    @model_validator(mode="after")
+    def require_core_fields(self) -> "CatalogDocUpdate":
+        if not self.headline.strip():
+            raise ValueError("Headline is required.")
+        if not self.what_it_measures.strip():
+            raise ValueError("'What it measures' is required.")
+        return self
+
+
+class CatalogDocOut(BaseModel):
+    """Stored doc page. ``is_template`` means it was auto-created and still needs to be filled out."""
+
+    content: CatalogDocContent
+    is_template: bool
+    updated_at: str
+    updated_by: str = ""
+
+
 class CatalogEntry(CatalogEntryCreate):
     """Stored catalog template returned by the API."""
 
     formula_description: str = ""
     is_builtin: bool = False
     created_at: str
+    doc: CatalogDocOut | None = None
 
 
 class DistributionSpec(BaseModel):

@@ -33,6 +33,7 @@ import type {
   WorkflowSummaryOut,
 } from '../types/api';
 import { ApprovalStatusBadge } from './ApprovalStatusBadge';
+import { FieldLabel } from './FieldInfo';
 
 type DialogKind = 'submit' | 'approve' | 'reject' | 'withdraw' | 'reopen';
 
@@ -349,7 +350,7 @@ export function InitiativeApprovalPanel({ initiativeId, onStatusChange }: Props)
               </Alert>
             ) : (
               <Select
-                label="Approval workflow"
+                label={<FieldLabel field="approval.workflow">Approval workflow</FieldLabel>}
                 data={workflows.map((w) => ({
                   value: w.id,
                   label: w.is_default ? `${w.name} (default)` : w.name,
@@ -368,7 +369,7 @@ export function InitiativeApprovalPanel({ initiativeId, onStatusChange }: Props)
             </Text>
           )}
           <Textarea
-            label="Comment"
+            label={<FieldLabel field="approval.comment">Comment</FieldLabel>}
             placeholder={copy?.placeholder}
             value={comment}
             onChange={(e) => setComment(e.currentTarget.value)}

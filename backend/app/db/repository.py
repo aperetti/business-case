@@ -22,7 +22,15 @@ from app.config import (
 from app.core.catalog import describe_formula
 from app.core.engine import run_deterministic
 from app.db.database import get_connection
+from pydantic import ValidationError as PydanticValidationError
+
 from app.models import (
+    CatalogDocContent,
+    CatalogDocModelingTips,
+    CatalogDocOut,
+    CatalogDocParameterGuidance,
+    CatalogDocUpdate,
+    CatalogEntryUpdate,
     ApiKeyCreatedOut,
     ApiKeyOut,
     AuthUserOut,
@@ -102,7 +110,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_catalog_entry(row: sqlite3.Row) -> CatalogEntry:
+def _row_to_catalog_doc(row: sqlite3.Row) -> CatalogDocOut:
+    try:
+        content = CatalogDocContent.model_validate(json.loads(row["content_json"] or "{}"))
+    except (json.JSONDecodeError, PydanticValidationError):
+        content = CatalogDocContent()
+    return CatalogDocOut(
+        content=content,
+        is_template=bool(row["is_template"]),
+        updated_at=row["updated_at"],
+        updated_by=row["updated_by"] or "",
+    )
+
+
+def _load_catalog_docs(conn: sqlite3.Connection, catalog_id: str | None = None) -> dict[str, CatalogDocOut]:
+    if catalog_id is None:
+        rows = conn.execute("SELECT * FROM catalog_docs").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM catalog_docs WHERE catalog_id = ?", (catalog_id,)).fetchall()
+    return {r["catalog_id"]: _row_to_catalog_doc(r) for r in rows}
+
+
+def _row_to_catalog_entry(row: sqlite3.Row, doc: CatalogDocOut | None = None) -> CatalogEntry:
     params = [CatalogParameter.model_validate(p) for p in json.loads(row["parameters_json"])]
     formula_type = row["formula_type"]
     return CatalogEntry(
@@ -118,6 +147,7 @@ def _row_to_catalog_entry(row: sqlite3.Row) -> CatalogEntry:
         guardrail_notes=row["guardrail_notes"],
         is_builtin=bool(row["is_builtin"]),
         created_at=row["created_at"],
+        doc=doc,
     )
 
 
@@ -237,7 +267,8 @@ def list_catalog(
             params.append(kind)
         query += " ORDER BY kind ASC, is_builtin DESC, id ASC"
         rows = conn.execute(query, params).fetchall()
-        entries = [_row_to_catalog_entry(r) for r in rows]
+        docs = _load_catalog_docs(conn)
+        entries = [_row_to_catalog_entry(r, docs.get(r["id"])) for r in rows]
 
     if domain:
         target = domain.strip().lower()
@@ -252,7 +283,7 @@ def list_catalog(
     return entries
 
 
-def create_catalog_entry(db_path: Path, payload: CatalogEntryCreate) -> CatalogEntry:
+def create_catalog_entry(db_path: Path, payload: CatalogEntryCreate, *, created_by: str = "") -> CatalogEntry:
     now = _now_iso()
     with get_connection(db_path) as conn:
         existing = conn.execute("SELECT id FROM catalog_entries WHERE id = ?", (payload.id,)).fetchone()
@@ -278,9 +309,196 @@ def create_catalog_entry(db_path: Path, payload: CatalogEntryCreate) -> CatalogE
                 now,
             ),
         )
+        _write_catalog_doc(
+            conn, payload.id, template_catalog_doc(payload.parameters), is_template=True, updated_by=created_by
+        )
         row = conn.execute("SELECT * FROM catalog_entries WHERE id = ?", (payload.id,)).fetchone()
         assert row is not None
-        return _row_to_catalog_entry(row)
+        return _row_to_catalog_entry(row, _load_catalog_docs(conn, payload.id).get(payload.id))
+
+
+def template_catalog_doc(parameters: list[CatalogParameter]) -> CatalogDocContent:
+    """Blank doc page for a new catalog template: every section present, nothing filled in."""
+    return CatalogDocContent(
+        parameter_guidance={p.key: CatalogDocParameterGuidance() for p in parameters},
+        modeling_tips=CatalogDocModelingTips(),
+    )
+
+
+def _write_catalog_doc(
+    conn: sqlite3.Connection,
+    catalog_id: str,
+    content: CatalogDocContent,
+    *,
+    is_template: bool,
+    updated_by: str = "",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO catalog_docs (catalog_id, content_json, is_template, updated_by, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(catalog_id) DO UPDATE SET
+            content_json = excluded.content_json,
+            is_template = excluded.is_template,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at
+        """,
+        (
+            catalog_id,
+            json.dumps(content.model_dump()),
+            1 if is_template else 0,
+            updated_by,
+            _now_iso(),
+        ),
+    )
+
+
+def _get_catalog_entry(conn: sqlite3.Connection, entry_id: str) -> CatalogEntry:
+    row = conn.execute("SELECT * FROM catalog_entries WHERE id = ?", (entry_id,)).fetchone()
+    if row is None:
+        raise NotFoundError(f"Catalog entry '{entry_id}' not found.")
+    return _row_to_catalog_entry(row, _load_catalog_docs(conn, entry_id).get(entry_id))
+
+
+def get_catalog_entry(db_path: Path, entry_id: str) -> CatalogEntry:
+    with get_connection(db_path) as conn:
+        return _get_catalog_entry(conn, entry_id)
+
+
+_CATALOG_DEFINITION_FIELDS = (
+    "kind",
+    "name",
+    "description",
+    "domains",
+    "value_stream_stage",
+    "parameters",
+    "formula_type",
+    "guardrail_notes",
+)
+
+
+def update_catalog_entry(db_path: Path, entry_id: str, payload: CatalogEntryUpdate) -> CatalogEntry:
+    """Edit a catalog template (built-in or custom).
+
+    Changes that alter the math (kind, formula, parameters) are refused when the template
+    is used by an initiative that is under review or approved, and when they would leave
+    existing line items with parameter values outside the new bounds.
+    """
+    with get_connection(db_path) as conn:
+        current = _get_catalog_entry(conn, entry_id)
+        merged = current.model_dump(include=set(_CATALOG_DEFINITION_FIELDS) | {"id"})
+        for field in payload.model_fields_set:
+            merged[field] = getattr(payload, field)
+        if isinstance(merged.get("parameters"), list):
+            merged["parameters"] = [
+                p.model_dump() if isinstance(p, CatalogParameter) else p for p in merged["parameters"]
+            ]
+        try:
+            updated = CatalogEntryCreate.model_validate(merged)
+        except PydanticValidationError as exc:
+            msgs = "; ".join(err.get("msg", "").removeprefix("Value error, ") for err in exc.errors())
+            raise ValidationError(msgs or "Invalid catalog template.") from exc
+
+        new_params = [p.model_dump() for p in updated.parameters]
+        old_params = [p.model_dump() for p in current.parameters]
+        calc_changed = (
+            updated.kind != current.kind
+            or updated.formula_type.strip() != current.formula_type
+            or new_params != old_params
+        )
+
+        if calc_changed:
+            locked = conn.execute(
+                """
+                SELECT DISTINCT i.name FROM initiative_items it
+                JOIN initiatives i ON i.id = it.initiative_id
+                WHERE it.catalog_id = ? AND i.status IN ('in_review', 'approved')
+                ORDER BY i.name
+                """,
+                (entry_id,),
+            ).fetchall()
+            if locked:
+                names = ", ".join(f"'{r['name']}'" for r in locked[:3])
+                more = f" and {len(locked) - 3} more" if len(locked) > 3 else ""
+                raise LockedError(
+                    f"The formula, kind, and parameters of {entry_id} can't change while it is used by "
+                    f"initiatives under review or approved ({names}{more}). Withdraw or reopen them first, "
+                    "or edit only the name, description, domains, and notes."
+                )
+
+            item_rows = conn.execute(
+                "SELECT label, param_values_json FROM initiative_items WHERE catalog_id = ?", (entry_id,)
+            ).fetchall()
+            if item_rows and updated.kind != current.kind:
+                raise ValidationError(
+                    f"Cannot change {entry_id} from {current.kind} to {updated.kind}: "
+                    f"{len(item_rows)} line item(s) use it."
+                )
+            problems: list[str] = []
+            for item in item_rows:
+                values = json.loads(item["param_values_json"] or "{}")
+                for p in updated.parameters:
+                    val = float(values.get(p.key, p.default_value))
+                    if (p.min_value is not None and val < p.min_value) or (
+                        p.max_value is not None and val > p.max_value
+                    ):
+                        problems.append(f"'{item['label']}' {p.key}={val:g}")
+            if problems:
+                sample = ", ".join(problems[:3])
+                more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
+                raise ValidationError(
+                    f"New parameter bounds would invalidate existing line items: {sample}{more}. "
+                    "Widen the bounds or update those line items first."
+                )
+
+        conn.execute(
+            """
+            UPDATE catalog_entries SET kind = ?, name = ?, description = ?, domains_json = ?,
+                value_stream_stage = ?, parameters_json = ?, formula_type = ?, guardrail_notes = ?
+            WHERE id = ?
+            """,
+            (
+                updated.kind,
+                updated.name.strip(),
+                updated.description.strip(),
+                json.dumps(updated.domains),
+                updated.value_stream_stage.strip() if updated.value_stream_stage else None,
+                json.dumps(new_params),
+                updated.formula_type.strip(),
+                updated.guardrail_notes.strip(),
+                entry_id,
+            ),
+        )
+
+        # Keep a template doc's parameter checklist in step with the parameters.
+        doc = _load_catalog_docs(conn, entry_id).get(entry_id)
+        if doc is not None and doc.is_template:
+            guidance = {
+                p.key: doc.content.parameter_guidance.get(p.key, CatalogDocParameterGuidance())
+                for p in updated.parameters
+            }
+            content = doc.content.model_copy(update={"parameter_guidance": guidance})
+            _write_catalog_doc(conn, entry_id, content, is_template=True, updated_by=doc.updated_by)
+
+        return _get_catalog_entry(conn, entry_id)
+
+
+def save_catalog_doc(db_path: Path, entry_id: str, payload: CatalogDocUpdate, *, updated_by: str = "") -> CatalogEntry:
+    with get_connection(db_path) as conn:
+        _get_catalog_entry(conn, entry_id)
+        content = CatalogDocContent.model_validate(payload.model_dump())
+        _write_catalog_doc(conn, entry_id, content, is_template=False, updated_by=updated_by)
+        return _get_catalog_entry(conn, entry_id)
+
+
+def reset_catalog_doc(db_path: Path, entry_id: str) -> CatalogEntry:
+    """Drop edits to a built-in template's doc page so the shipped documentation shows again."""
+    with get_connection(db_path) as conn:
+        entry = _get_catalog_entry(conn, entry_id)
+        if not entry.is_builtin:
+            raise ValidationError("Only built-in templates have default documentation to reset to.")
+        conn.execute("DELETE FROM catalog_docs WHERE catalog_id = ?", (entry_id,))
+        return _get_catalog_entry(conn, entry_id)
 
 
 # --- Initiative & BCA operations ---

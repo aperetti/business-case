@@ -21,6 +21,7 @@ import { IconCopy, IconPlus, IconScale } from '@tabler/icons-react';
 import { z } from 'zod';
 import type { BCACreate, BCASummary } from '../types/api';
 import { formatCompactCurrency, formatPercent, zodFormValidate } from '../utils/format';
+import { FieldLabel } from './FieldInfo';
 
 interface BarProps {
   bcas: BCASummary[];
@@ -269,13 +270,13 @@ export function CreateBCAModal({
       <Box component="form" onSubmit={handleSubmit}>
         <Stack gap="sm">
           <TextInput
-            label="BCA Name"
+            label={<FieldLabel field="bca.name">BCA Name</FieldLabel>}
             placeholder="e.g., Managed Cloud Option B"
             required
             {...form.getInputProps('name')}
           />
           <Select
-            label="Line Items Source"
+            label={<FieldLabel field="bca.source">Line Items Source</FieldLabel>}
             data={cloneOptions}
             value={form.values.clone_from_bca_id}
             onChange={handleCloneChange}
@@ -283,7 +284,7 @@ export function CreateBCAModal({
           />
           <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="xs">
             <NumberInput
-              label="Cost Start Year"
+              label={<FieldLabel field="initiative.cost_start_year">Cost Start Year</FieldLabel>}
               placeholder="e.g. 2026"
               min={2000}
               max={2100}
@@ -293,14 +294,14 @@ export function CreateBCAModal({
               {...form.getInputProps('cost_start_year')}
             />
             <NumberInput
-              label="Horizon (Years)"
+              label={<FieldLabel field="initiative.horizon">Horizon (Years)</FieldLabel>}
               min={1}
               max={30}
               required
               {...form.getInputProps('horizon_years')}
             />
             <NumberInput
-              label="Discount Rate (%)"
+              label={<FieldLabel field="initiative.discount_rate">Discount Rate (%)</FieldLabel>}
               min={0}
               max={50}
               step={0.5}
@@ -310,7 +311,7 @@ export function CreateBCAModal({
             />
           </SimpleGrid>
           <Textarea
-            label="Scenario Notes"
+            label={<FieldLabel field="bca.notes">Scenario Notes</FieldLabel>}
             placeholder="How this BCA differs from the baseline (e.g., vendor SaaS vs. internal build)..."
             minRows={2}
             autosize

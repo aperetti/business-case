@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS catalog_entries (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS catalog_docs (
+    catalog_id TEXT PRIMARY KEY REFERENCES catalog_entries(id) ON DELETE CASCADE,
+    content_json TEXT NOT NULL,
+    is_template INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS initiatives (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

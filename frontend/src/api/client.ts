@@ -1,4 +1,6 @@
 import type {
+  CatalogDocContent,
+  CatalogEntryUpdate,
   ApiKeyCreatedOut,
   EmailLogOut,
   EmailSettingsOut,
@@ -175,6 +177,21 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return request<CatalogEntry[]>(`/api/catalog${suffix}`);
   },
+
+  updateCatalogEntry: (id: string, payload: CatalogEntryUpdate) =>
+    request<CatalogEntry>(`/api/catalog/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  saveCatalogDoc: (id: string, content: CatalogDocContent) =>
+    request<CatalogEntry>(`/api/catalog/${encodeURIComponent(id)}/doc`, {
+      method: 'PUT',
+      body: JSON.stringify(content),
+    }),
+
+  resetCatalogDoc: (id: string) =>
+    request<CatalogEntry>(`/api/catalog/${encodeURIComponent(id)}/doc`, { method: 'DELETE' }),
 
   createCatalogEntry: (payload: CatalogEntryCreate) =>
     request<CatalogEntry>('/api/catalog', {

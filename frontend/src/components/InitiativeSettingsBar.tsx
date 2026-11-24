@@ -20,6 +20,7 @@ import { IconCheck, IconExternalLink, IconStar, IconTrash } from '@tabler/icons-
 import { z } from 'zod';
 import type { BCASummary, BCAUpdate, InitiativeDetail, InitiativeUpdate } from '../types/api';
 import { DOMAIN_OPTIONS, isValidHttpUrl, zodFormValidate } from '../utils/format';
+import { FieldLabel } from './FieldInfo';
 
 const settingsSchema = z.object({
   name: z.string().trim().min(1, 'Initiative name is required').max(200),
@@ -220,14 +221,14 @@ export function InitiativeSettingsBar({
             <Grid gutter="xs">
               <Grid.Col span={{ base: 12, sm: 6, lg: 4 }}>
                 <TextInput
-                  label="Initiative Name"
+                  label={<FieldLabel field="initiative.name">Initiative Name</FieldLabel>}
                   required
                   {...form.getInputProps('name')}
                 />
               </Grid.Col>
               <Grid.Col span={{ base: 12, sm: 6, lg: 2 }}>
                 <Autocomplete
-                  label="Domain Tag"
+                  label={<FieldLabel field="initiative.domain">Domain Tag</FieldLabel>}
                   data={DOMAIN_OPTIONS.map((d) => d.value)}
                   required
                   {...form.getInputProps('domain')}
@@ -236,7 +237,7 @@ export function InitiativeSettingsBar({
               <Grid.Col span={{ base: 12, lg: 6 }}>
                 <Group align="flex-end" gap="xs" wrap="nowrap">
                   <TextInput
-                    label="External Resource (SharePoint)"
+                    label={<FieldLabel field="initiative.external_url">External Resource (SharePoint)</FieldLabel>}
                     placeholder="https://company.sharepoint.com/sites/..."
                     style={{ flex: 1, minWidth: 0 }}
                     {...form.getInputProps('external_resource_url')}
@@ -260,7 +261,7 @@ export function InitiativeSettingsBar({
             </Grid>
 
             <TextInput
-              label="Initiative Description"
+              label={<FieldLabel field="initiative.description">Initiative Description</FieldLabel>}
               placeholder="Program scope and cross-BCA economic boundary"
               {...form.getInputProps('description')}
             />
@@ -315,14 +316,14 @@ export function InitiativeSettingsBar({
             <Grid gutter="xs">
               <Grid.Col span={{ base: 12, sm: 6, lg: 3 }}>
                 <TextInput
-                  label="BCA Name"
+                  label={<FieldLabel field="bca.name">BCA Name</FieldLabel>}
                   required
                   {...form.getInputProps('bca_name')}
                 />
               </Grid.Col>
               <Grid.Col span={{ base: 6, sm: 3, lg: 2 }}>
                 <NumberInput
-                  label="Cost Start Year"
+                  label={<FieldLabel field="initiative.cost_start_year">Cost Start Year</FieldLabel>}
                   placeholder="e.g. 2026"
                   min={2000}
                   max={2100}
@@ -334,7 +335,7 @@ export function InitiativeSettingsBar({
               </Grid.Col>
               <Grid.Col span={{ base: 6, sm: 3, lg: 2 }}>
                 <NumberInput
-                  label="Horizon (Yrs)"
+                  label={<FieldLabel field="initiative.horizon">Horizon (Yrs)</FieldLabel>}
                   min={1}
                   max={30}
                   required
@@ -343,7 +344,7 @@ export function InitiativeSettingsBar({
               </Grid.Col>
               <Grid.Col span={{ base: 12, sm: 4, lg: 2 }}>
                 <NumberInput
-                  label="Discount Rate (%)"
+                  label={<FieldLabel field="initiative.discount_rate">Discount Rate (%)</FieldLabel>}
                   min={0}
                   max={50}
                   step={0.5}
@@ -354,7 +355,7 @@ export function InitiativeSettingsBar({
               </Grid.Col>
               <Grid.Col span={{ base: 12, sm: 8, lg: 3 }}>
                 <TextInput
-                  label="BCA Scenario Notes"
+                  label={<FieldLabel field="bca.notes">BCA Scenario Notes</FieldLabel>}
                   placeholder="Key distinction for this BCA..."
                   {...form.getInputProps('bca_description')}
                 />

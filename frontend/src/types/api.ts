@@ -25,7 +25,42 @@ export interface CatalogEntry {
   guardrail_notes: string;
   is_builtin: boolean;
   created_at: string;
+  /** Stored doc page; null for built-ins that use the shipped docs. */
+  doc?: CatalogDocOut | null;
 }
+
+export interface CatalogDocAlternative {
+  text: string;
+  link_slug?: string | null;
+  link_label?: string | null;
+}
+
+export interface CatalogDocParameterGuidance {
+  guidance: string;
+  typical_range: string;
+  data_source: string;
+}
+
+export interface CatalogDocContent {
+  headline: string;
+  what_it_measures: string;
+  economic_rationale: string;
+  when_to_use: string[];
+  when_not_to_use: CatalogDocAlternative[];
+  formula_plain_english: string;
+  parameter_guidance: Record<string, CatalogDocParameterGuidance>;
+  modeling_tips: { schedule: string; ramp: string; uncertainty: string; correlation: string };
+  guardrail_notes: string[];
+}
+
+export interface CatalogDocOut {
+  content: CatalogDocContent;
+  is_template: boolean;
+  updated_at: string;
+  updated_by: string;
+}
+
+export type CatalogEntryUpdate = Partial<Omit<CatalogEntryCreate, 'id'>>;
 
 export interface CatalogEntryCreate {
   id: string;

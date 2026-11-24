@@ -27,6 +27,7 @@ import {
   zodFormValidate,
 } from '../utils/format';
 import { ApprovalStatusBadge } from './ApprovalStatusBadge';
+import { FieldLabel } from './FieldInfo';
 
 const createInitiativeSchema = z.object({
   name: z.string().trim().min(1, 'Initiative name is required').max(200),
@@ -253,13 +254,13 @@ export function InitiativeSidebar({
         <Box component="form" onSubmit={handleSubmit}>
           <Stack gap="sm">
             <TextInput
-              label="Initiative Name"
+              label={<FieldLabel field="initiative.name">Initiative Name</FieldLabel>}
               placeholder="e.g., Automated Field Dispatch Modernization"
               required
               {...form.getInputProps('name')}
             />
             <Select
-              label="Domain"
+              label={<FieldLabel field="initiative.domain">Domain</FieldLabel>}
               data={DOMAIN_OPTIONS}
               searchable
               required
@@ -267,7 +268,7 @@ export function InitiativeSidebar({
             />
             <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="xs">
               <NumberInput
-                label="Cost Start Year"
+                label={<FieldLabel field="initiative.cost_start_year">Cost Start Year</FieldLabel>}
                 placeholder="e.g. 2026"
                 min={2000}
                 max={2100}
@@ -277,14 +278,14 @@ export function InitiativeSidebar({
                 {...form.getInputProps('cost_start_year')}
               />
               <NumberInput
-                label="Horizon (Years)"
+                label={<FieldLabel field="initiative.horizon">Horizon (Years)</FieldLabel>}
                 min={1}
                 max={30}
                 required
                 {...form.getInputProps('horizon_years')}
               />
               <NumberInput
-                label="Discount Rate (%)"
+                label={<FieldLabel field="initiative.discount_rate">Discount Rate (%)</FieldLabel>}
                 min={0}
                 max={50}
                 step={0.5}
@@ -294,12 +295,12 @@ export function InitiativeSidebar({
               />
             </SimpleGrid>
             <TextInput
-              label="External Resource (SharePoint)"
+              label={<FieldLabel field="initiative.external_url">External Resource (SharePoint)</FieldLabel>}
               placeholder="https://company.sharepoint.com/sites/..."
               {...form.getInputProps('external_resource_url')}
             />
             <Textarea
-              label="Description"
+              label={<FieldLabel field="initiative.description">Description</FieldLabel>}
               placeholder="Scope, key capability outcomes, and investment context..."
               minRows={3}
               autosize

@@ -45,6 +45,7 @@ import type {
   WorkflowOut,
   WorkflowStep,
 } from '../types/api';
+import { FieldInfo, FieldLabel } from './FieldInfo';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -323,7 +324,7 @@ export function AdminWorkflowsPanel() {
             </Alert>
           )}
           <TextInput
-            label="Name"
+            label={<FieldLabel field="workflow.name">Name</FieldLabel>}
             required
             value={draft.name}
             maxLength={120}
@@ -339,18 +340,18 @@ export function AdminWorkflowsPanel() {
           />
           <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
             <Switch
-              label="Active"
+              label={<FieldLabel field="workflow.flags">Active</FieldLabel>}
               checked={draft.is_active}
               onChange={(e) => setDraft({ ...draft, is_active: e.currentTarget.checked })}
             />
             <Switch
-              label="Default workflow"
+              label={<FieldLabel field="workflow.flags">Default workflow</FieldLabel>}
               checked={draft.is_default}
               disabled={!draft.is_active}
               onChange={(e) => setDraft({ ...draft, is_default: e.currentTarget.checked })}
             />
             <Switch
-              label="Email submitter on decision"
+              label={<FieldLabel field="workflow.flags">Email submitter on decision</FieldLabel>}
               checked={draft.notify_submitter}
               onChange={(e) => setDraft({ ...draft, notify_submitter: e.currentTarget.checked })}
             />
@@ -406,7 +407,7 @@ export function AdminWorkflowsPanel() {
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                   <MultiSelect
-                    label="Approver roles"
+                    label={<FieldLabel field="workflow.step_roles">Approver roles</FieldLabel>}
                     placeholder={step.approver_role_ids.length ? undefined : 'Any member of…'}
                     data={roleOptions}
                     value={step.approver_role_ids}
@@ -415,7 +416,7 @@ export function AdminWorkflowsPanel() {
                     searchable
                   />
                   <TagsInput
-                    label="Approver emails"
+                    label={<FieldLabel field="workflow.step_emails">Approver emails</FieldLabel>}
                     placeholder="Type an email, press Enter"
                     value={step.approver_emails}
                     onChange={(v) => patchStep(idx, { approver_emails: v.map((e) => e.trim().toLowerCase()) })}
@@ -425,7 +426,7 @@ export function AdminWorkflowsPanel() {
                 </SimpleGrid>
                 <Group gap="md" wrap="wrap" align="flex-end">
                   <NumberInput
-                    label="Approvals required"
+                    label={<FieldLabel field="workflow.step_required">Approvals required</FieldLabel>}
                     min={1}
                     max={20}
                     w={160}
@@ -433,7 +434,7 @@ export function AdminWorkflowsPanel() {
                     onChange={(v) => patchStep(idx, { required_approvals: Math.max(1, Number(v) || 1) })}
                   />
                   <Switch
-                    label="Email approvers when this step starts"
+                    label={<FieldLabel field="workflow.step_notify">Email approvers when this step starts</FieldLabel>}
                     checked={step.notify_approvers}
                     onChange={(e) => patchStep(idx, { notify_approvers: e.currentTarget.checked })}
                     mb={6}
@@ -596,21 +597,22 @@ function EmailSettingsCard() {
 
         <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
           <TextInput
-            label="SMTP host"
+            label={<FieldLabel field="email.smtp">SMTP host</FieldLabel>}
             placeholder="smtp.example.com"
             value={form.host}
             onChange={(e) => setForm({ ...form, host: e.currentTarget.value })}
           />
           <NumberInput
-            label="Port"
+            label={<FieldLabel field="email.smtp">Port</FieldLabel>}
             min={1}
             max={65535}
             value={form.port}
             onChange={(v) => setForm({ ...form, port: Number(v) || 587 })}
           />
           <Stack gap={4}>
-            <Text size="sm" fw={500}>
+            <Text size="sm" fw={500} className="field-label">
               Security
+              <FieldInfo field="email.smtp" />
             </Text>
             <SegmentedControl
               size="xs"
@@ -631,13 +633,13 @@ function EmailSettingsCard() {
 
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
           <TextInput
-            label="Username"
+            label={<FieldLabel field="email.credentials">Username</FieldLabel>}
             autoComplete="off"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.currentTarget.value })}
           />
           <PasswordInput
-            label="Password"
+            label={<FieldLabel field="email.credentials">Password</FieldLabel>}
             autoComplete="new-password"
             placeholder={settings.password_set && !clearPassword ? `Saved (${settings.password_masked})` : ''}
             value={password}
@@ -664,19 +666,19 @@ function EmailSettingsCard() {
             }
           />
           <TextInput
-            label="From address"
+            label={<FieldLabel field="email.from">From address</FieldLabel>}
             placeholder="bca-notifications@example.com"
             value={form.from_address}
             onChange={(e) => setForm({ ...form, from_address: e.currentTarget.value })}
           />
           <TextInput
-            label="From name"
+            label={<FieldLabel field="email.from">From name</FieldLabel>}
             value={form.from_name}
             onChange={(e) => setForm({ ...form, from_name: e.currentTarget.value })}
           />
         </SimpleGrid>
         <TextInput
-          label="App URL used in email links"
+          label={<FieldLabel field="email.app_url">App URL used in email links</FieldLabel>}
           placeholder="https://bca.example.com"
           value={form.app_base_url}
           onChange={(e) => setForm({ ...form, app_base_url: e.currentTarget.value })}

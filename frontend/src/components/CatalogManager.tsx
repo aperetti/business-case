@@ -2,6 +2,7 @@ import { Fragment, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
   Button,
   Code,
@@ -27,18 +28,28 @@ import {
   IconAlertTriangle,
   IconArrowBackUp,
   IconBook,
+  IconEdit,
   IconInfoCircle,
   IconPlus,
   IconSearch,
   IconTrash,
 } from '@tabler/icons-react';
 import { getCatalogItemDoc } from '../data/catalogDocs';
-import type { CatalogEntry, CatalogEntryCreate, CatalogKind, CatalogParameter } from '../types/api';
+import type {
+  CatalogEntry,
+  CatalogEntryCreate,
+  CatalogEntryUpdate,
+  CatalogKind,
+  CatalogParameter,
+} from '../types/api';
 import { DOMAIN_OPTIONS } from '../utils/format';
+import { FieldLabel } from './FieldInfo';
 
 interface Props {
   catalog: CatalogEntry[];
   onCreateEntry: (payload: CatalogEntryCreate) => Promise<void>;
+  onUpdateEntry?: (id: string, payload: CatalogEntryUpdate) => Promise<void>;
+  canManage?: boolean;
   onOpenDoc?: (catalogId: string) => void;
 }
 
@@ -46,9 +57,10 @@ interface CatalogCardProps {
   entry: CatalogEntry;
   isMobile: boolean;
   onOpenDoc?: (catalogId: string) => void;
+  onEdit?: (entry: CatalogEntry) => void;
 }
 
-function CatalogCard({ entry, isMobile, onOpenDoc }: CatalogCardProps) {
+function CatalogCard({ entry, isMobile, onOpenDoc, onEdit }: CatalogCardProps) {
   const [flipped, setFlipped] = useState(false);
   const frontFlipBtnRef = useRef<HTMLButtonElement>(null);
   const backFlipBtnRef = useRef<HTMLButtonElement>(null);
@@ -100,8 +112,22 @@ function CatalogCard({ entry, isMobile, onOpenDoc }: CatalogCardProps) {
                       {entry.value_stream_stage ? ` · Stage: ${entry.value_stream_stage}` : ''}
                     </Text>
                   </Group>
-                  {(hasNotes || onOpenDoc) && (
+                  {(hasNotes || onOpenDoc || onEdit) && (
                     <Group gap={4} wrap="nowrap" align="center" style={{ flexShrink: 0 }}>
+                      {onEdit && (
+                        <Tooltip label="Edit template" withArrow position="top">
+                          <ActionIcon
+                            type="button"
+                            variant="subtle"
+                            color="gray"
+                            size="sm"
+                            aria-label={`Edit ${entry.id}`}
+                            onClick={() => onEdit(entry)}
+                          >
+                            <IconEdit size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
                       {hasNotes && (
                         <Tooltip label="Warnings & guardrail notes" withArrow position="top">
                           <ActionIcon
@@ -134,7 +160,20 @@ function CatalogCard({ entry, isMobile, onOpenDoc }: CatalogCardProps) {
                     </Group>
                   )}
                 </Group>
-                <Title order={5}>{entry.name}</Title>
+                <Group gap={6} wrap="wrap">
+                  <Title order={5}>{entry.name}</Title>
+                  {entry.doc?.is_template && (
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color="yellow"
+                      style={{ cursor: onOpenDoc ? 'pointer' : undefined }}
+                      onClick={() => onOpenDoc?.(entry.id)}
+                    >
+                      Needs docs
+                    </Badge>
+                  )}
+                </Group>
               </div>
 
               {entry.description && (
@@ -379,7 +418,7 @@ const EMPTY_PARAM: CatalogParameter = {
   required: true,
 };
 
-export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
+export function CatalogManager({ catalog, onCreateEntry, onUpdateEntry, canManage = true, onOpenDoc }: Props) {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
   const [searchText, setSearchText] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | CatalogKind>('all');
@@ -408,6 +447,49 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
   ]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<CatalogEntry | null>(null);
+
+  const openCreate = () => {
+    setEditingEntry(null);
+    setErrorMsg(null);
+    open();
+  };
+
+  const openEdit = (entry: CatalogEntry) => {
+    setEditingEntry(entry);
+    setId(entry.id);
+    setKind(entry.kind);
+    setName(entry.name);
+    setDescription(entry.description);
+    setDomainsText(entry.domains.join(', '));
+    setStage(entry.value_stream_stage ?? '');
+    // Registered built-in formulas are shown by key; custom ones without the expr: prefix.
+    setFormulaExpr(entry.formula_type.startsWith('expr:') ? entry.formula_type.slice(5).trim() : entry.formula_type);
+    setGuardrailNotes(entry.guardrail_notes);
+    setParameters(entry.parameters.map((p) => ({ ...p })));
+    setErrorMsg(null);
+    open();
+  };
+
+  const closeModal = () => {
+    close();
+    if (editingEntry) {
+      // Don't leave an edited template's values in the "new template" form.
+      setEditingEntry(null);
+      setId('');
+      setKind('benefit');
+      setName('');
+      setDescription('');
+      setDomainsText('software, automation');
+      setStage('Automate');
+      setGuardrailNotes('');
+      setFormulaExpr('volume * unit_value');
+      setParameters([
+        { ...EMPTY_PARAM },
+        { key: 'unit_value', label: 'Value per Unit', unit: '$/unit', default_value: 250, min_value: 0, max_value: null, required: true },
+      ]);
+    }
+  };
 
   const domainOptions = useMemo(() => {
     const all = new Set<string>(DOMAIN_OPTIONS.map((d) => d.value));
@@ -463,9 +545,13 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
       }
     }
 
-    const formula = formulaExpr.trim().startsWith('expr:')
-      ? formulaExpr.trim()
-      : `expr:${formulaExpr.trim()}`;
+    const rawFormula = formulaExpr.trim();
+    const formula =
+      editingEntry && !editingEntry.formula_type.startsWith('expr:') && rawFormula === editingEntry.formula_type
+        ? editingEntry.formula_type
+        : rawFormula.startsWith('expr:')
+          ? rawFormula
+          : `expr:${rawFormula}`;
 
     const domains = domainsText
       .split(',')
@@ -473,6 +559,26 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
       .filter(Boolean);
 
     setSubmitting(true);
+    if (editingEntry && onUpdateEntry) {
+      try {
+        await onUpdateEntry(editingEntry.id, {
+          kind,
+          name: name.trim(),
+          description: description.trim(),
+          domains,
+          value_stream_stage: stage.trim() || null,
+          parameters,
+          formula_type: formula,
+          guardrail_notes: guardrailNotes.trim(),
+        });
+        closeModal();
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Failed to update catalog template.');
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       await onCreateEntry({
         id: trimmedId,
@@ -507,15 +613,17 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
               Inspect built-in formulas, guardrails, and safe custom AST expression templates
             </Text>
           </div>
-          <Button
-            type="button"
-            variant="default"
-            fullWidth={isMobile}
-            leftSection={<IconPlus size={15} />}
-            onClick={open}
-          >
-            New Catalog Template
-          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              variant="default"
+              fullWidth={isMobile}
+              leftSection={<IconPlus size={15} />}
+              onClick={openCreate}
+            >
+              New Catalog Template
+            </Button>
+          )}
         </Group>
 
         <search>
@@ -552,14 +660,20 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
 
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
         {filtered.map((entry) => (
-          <CatalogCard key={entry.id} entry={entry} isMobile={isMobile} onOpenDoc={onOpenDoc} />
+          <CatalogCard
+            key={entry.id}
+            entry={entry}
+            isMobile={isMobile}
+            onOpenDoc={onOpenDoc}
+            onEdit={canManage && onUpdateEntry ? openEdit : undefined}
+          />
         ))}
       </SimpleGrid>
 
       <Modal
         opened={opened}
-        onClose={close}
-        title="Create Custom Catalog Template"
+        onClose={closeModal}
+        title={editingEntry ? `Edit ${editingEntry.id}` : 'Create Custom Catalog Template'}
         size="lg"
         fullScreen={isMobile}
       >
@@ -571,16 +685,28 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
               </Alert>
             )}
 
+            {editingEntry && (
+              <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />} p="xs">
+                <Text size="xs">
+                  Changes to the kind, formula, or parameters recalculate every initiative using this template, and
+                  are blocked while any of those initiatives are under review or approved. Name, description,
+                  domains, and notes can always be edited.
+                  {editingEntry.is_builtin ? ' This is a built-in template.' : ''}
+                </Text>
+              </Alert>
+            )}
+
             <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
               <TextInput
-                label="Template ID"
+                label={<FieldLabel field="catalog.id">Template ID</FieldLabel>}
                 placeholder="BEN-CUSTOM-01"
                 value={id}
                 onChange={(e) => setId(e.currentTarget.value)}
+                disabled={Boolean(editingEntry)}
                 required
               />
               <Select
-                label="Kind"
+                label={<FieldLabel field="catalog.kind">Kind</FieldLabel>}
                 data={[
                   { value: 'benefit', label: 'Benefit' },
                   { value: 'cost', label: 'Cost' },
@@ -590,7 +716,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                 allowDeselect={false}
               />
               <TextInput
-                label="Default Stage"
+                label={<FieldLabel field="catalog.stage">Default Stage</FieldLabel>}
                 placeholder="Automate"
                 value={stage}
                 onChange={(e) => setStage(e.currentTarget.value)}
@@ -598,7 +724,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
             </SimpleGrid>
 
             <TextInput
-              label="Template Name"
+              label={<FieldLabel field="catalog.name">Template Name</FieldLabel>}
               placeholder="e.g., SLA Latency Penalty Avoidance"
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
@@ -606,13 +732,13 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
             />
 
             <TextInput
-              label="Domains (comma-separated)"
+              label={<FieldLabel field="catalog.domains">Domains (comma-separated)</FieldLabel>}
               value={domainsText}
               onChange={(e) => setDomainsText(e.currentTarget.value)}
             />
 
             <Textarea
-              label="Description"
+              label={<FieldLabel field="catalog.description">Description</FieldLabel>}
               minRows={2}
               autosize
               value={description}
@@ -650,9 +776,9 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                         <IconTrash size={14} />
                       </ActionIcon>
                     </Group>
-                    <SimpleGrid cols={{ base: 2, sm: 5 }} spacing="xs">
+                    <SimpleGrid cols={{ base: 2, sm: 6 }} spacing="xs">
                       <TextInput
-                        label="Key"
+                        label={<FieldLabel field="catalog.param_key">Key</FieldLabel>}
                         size="xs"
                         value={param.key}
                         onChange={(e) => {
@@ -662,7 +788,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                         }}
                       />
                       <TextInput
-                        label="Label"
+                        label={<FieldLabel field="catalog.param_label">Label</FieldLabel>}
                         size="xs"
                         value={param.label}
                         onChange={(e) => {
@@ -672,7 +798,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                         }}
                       />
                       <TextInput
-                        label="Unit"
+                        label={<FieldLabel field="catalog.param_unit">Unit</FieldLabel>}
                         size="xs"
                         value={param.unit}
                         onChange={(e) => {
@@ -682,7 +808,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                         }}
                       />
                       <NumberInput
-                        label="Default"
+                        label={<FieldLabel field="catalog.param_default">Default</FieldLabel>}
                         size="xs"
                         value={param.default_value}
                         onChange={(v) => {
@@ -695,7 +821,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                         }}
                       />
                       <NumberInput
-                        label="Min"
+                        label={<FieldLabel field="catalog.param_bounds">Min</FieldLabel>}
                         size="xs"
                         value={param.min_value ?? undefined}
                         onChange={(v) => {
@@ -703,6 +829,20 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
                           next[idx] = {
                             ...next[idx],
                             min_value: typeof v === 'number' ? v : null,
+                          };
+                          setParameters(next);
+                        }}
+                      />
+                      <NumberInput
+                        label={<FieldLabel field="catalog.param_bounds">Max</FieldLabel>}
+                        size="xs"
+                        placeholder="None"
+                        value={param.max_value ?? undefined}
+                        onChange={(v) => {
+                          const next = [...parameters];
+                          next[idx] = {
+                            ...next[idx],
+                            max_value: typeof v === 'number' ? v : null,
                           };
                           setParameters(next);
                         }}
@@ -737,7 +877,7 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
             </Box>
 
             <TextInput
-              label="Safe Arithmetic Formula (validated AST expression)"
+              label={<FieldLabel field="catalog.formula">Safe Arithmetic Formula (validated AST expression)</FieldLabel>}
               description="Supports +, -, *, /, **, min(), max(), abs() referencing declared parameter keys"
               value={formulaExpr}
               onChange={(e) => setFormulaExpr(e.currentTarget.value)}
@@ -746,12 +886,21 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
 
             <Alert color="gray" variant="light" icon={<IconInfoCircle size={16} />} p="xs">
               <Text size="xs">
-                Stored safely as <Code>expr:{formulaExpr.replace(/^expr:/, '')}</Code> — never executed via eval().
+                {editingEntry && !editingEntry.formula_type.startsWith('expr:') && formulaExpr.trim() === editingEntry.formula_type ? (
+                  <>
+                    Built-in formula <Code>{editingEntry.formula_type}</Code>: {editingEntry.formula_description}. Replace
+                    it with an arithmetic expression to customise the calculation.
+                  </>
+                ) : (
+                  <>
+                    Stored safely as <Code>expr:{formulaExpr.replace(/^expr:/, '')}</Code> — never executed via eval().
+                  </>
+                )}
               </Text>
             </Alert>
 
             <Textarea
-              label="Anti-Double-Counting Guardrail Notes"
+              label={<FieldLabel field="catalog.guardrails">Anti-Double-Counting Guardrail Notes</FieldLabel>}
               minRows={2}
               autosize
               value={guardrailNotes}
@@ -759,11 +908,11 @@ export function CatalogManager({ catalog, onCreateEntry, onOpenDoc }: Props) {
             />
 
             <Group justify="flex-end" mt="xs" grow={isMobile}>
-              <Button type="button" variant="default" onClick={close}>
+              <Button type="button" variant="default" onClick={closeModal}>
                 Cancel
               </Button>
               <Button type="submit" loading={submitting}>
-                Create Template
+                {editingEntry ? 'Save Changes' : 'Create Template'}
               </Button>
             </Group>
           </Stack>

@@ -1,5 +1,7 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
+  Box,
   Button,
   Code,
   Divider,
@@ -15,9 +17,11 @@ import {
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import {
+  IconArrowBackUp,
   IconArrowLeft,
   IconArrowRight,
   IconBook,
+  IconEdit,
   IconMessageCircle,
   IconPlus,
   IconSearch,
@@ -37,6 +41,9 @@ import type {
 } from '../types/api';
 import { formatCurrency, formatPercent } from '../utils/format';
 import { DocsAgentChat } from './DocsAgentChat';
+import { CatalogDocEditor } from './CatalogDocEditor';
+import { api } from '../api/client';
+import { notifications } from '@mantine/notifications';
 
 interface Props {
   catalog: CatalogEntry[];
@@ -48,6 +55,9 @@ interface Props {
   activeInitiative?: InitiativeDetail | null;
   onOpenAdmin: () => void;
   onOpenChatDrawer?: () => void;
+  /** Whether the viewer may edit catalog templates and their documentation. */
+  canManageCatalog?: boolean;
+  onCatalogEntryChanged?: (entry: CatalogEntry) => void;
 }
 
 interface NavEntry {
@@ -76,7 +86,7 @@ const CODE_BLOCK_STYLE: React.CSSProperties = {
 
 export function DocsSite({
   catalog,
-  activeSlug,
+  activeSlug: activeRoute,
   onSelectSlug,
   hasActiveInitiative,
   onUseTemplate,
@@ -84,8 +94,24 @@ export function DocsSite({
   activeInitiative,
   onOpenAdmin,
   onOpenChatDrawer,
+  canManageCatalog = false,
+  onCatalogEntryChanged,
 }: Props) {
+  // Routes may carry a section anchor: "<slug>#<section-id>".
+  const [activeSlug, activeAnchor] = activeRoute.split('#');
   const isCompactNav = useMediaQuery('(max-width: 62em)') ?? false;
+  useEffect(() => {
+    if (!activeAnchor) return;
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(activeAnchor);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.setAttribute('data-highlight', 'true');
+        window.setTimeout(() => el.removeAttribute('data-highlight'), 2000);
+      }
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [activeRoute, activeAnchor]);
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
   const [navFilter, setNavFilter] = useState('');
 
@@ -371,6 +397,9 @@ export function DocsSite({
           ) : activeCatalogEntry ? (
             <CatalogItemDocView
               entry={activeCatalogEntry}
+              catalog={catalog}
+              canManage={canManageCatalog}
+              onEntryChanged={onCatalogEntryChanged}
               isMobile={isMobile}
               hasActiveInitiative={hasActiveInitiative}
               onSelectSlug={onSelectSlug}
@@ -438,7 +467,7 @@ export function DocsSite({
   );
 }
 
-function GuidePageView({
+export function GuidePageView({
   guide,
   catalog,
   isMobile,
@@ -465,14 +494,23 @@ function GuidePageView({
 
       {guide.sections.map((sec) => (
         <Paper
-          key={sec.heading}
+          key={sec.id ?? sec.heading}
+          id={sec.id}
+          className="docs-section"
           withBorder
           p={{ base: 'sm', sm: 'md' }}
           radius="md"
           bg="var(--bg-surface)"
         >
           <Stack gap="sm" style={{ minWidth: 0 }}>
-            <Title order={4}>{sec.heading}</Title>
+            <div>
+              {sec.eyebrow && (
+                <Text size="xs" fw={600} c="var(--text-muted)" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+                  {sec.eyebrow}
+                </Text>
+              )}
+              <Title order={4}>{sec.heading}</Title>
+            </div>
 
             {sec.paragraphs?.map((p, idx) => (
               <Text key={idx} size="sm" c="var(--text-body)" lh={1.6}>
@@ -498,6 +536,24 @@ function GuidePageView({
               <div className="callout-note" role="note">
                 {sec.callout}
               </div>
+            )}
+
+            {sec.links && sec.links.length > 0 && (
+              <Group gap="xs">
+                {sec.links.map((link) => (
+                  <Button
+                    key={link.slug}
+                    type="button"
+                    size="compact-xs"
+                    variant="subtle"
+                    px={4}
+                    rightSection={<IconArrowRight size={12} />}
+                    onClick={() => onSelectSlug(link.slug)}
+                  >
+                    See also: {link.label}
+                  </Button>
+                ))}
+              </Group>
             )}
 
             {sec.table && (
@@ -684,8 +740,28 @@ function GuidePageView({
   );
 }
 
-function CatalogItemDocView({
+/** Shows a section's text, or a fill-in prompt when an auto-created page leaves it empty. */
+function DocText({ text, prompt, size = 'sm' }: { text: string; prompt: string; size?: 'xs' | 'sm' }) {
+  if (text.trim()) {
+    return (
+      <Text size={size} c="var(--text-body)" lh={1.6} style={{ whiteSpace: 'pre-wrap' }}>
+        {text}
+      </Text>
+    );
+  }
+  return (
+    <Text size={size} c="var(--text-muted)" fs="italic" lh={1.5}>
+      To fill in: {prompt}
+    </Text>
+  );
+}
+
+export function CatalogItemDocView({
   entry,
+  embedded = false,
+  catalog,
+  canManage,
+  onEntryChanged,
   isMobile,
   hasActiveInitiative,
   onSelectSlug,
@@ -693,6 +769,11 @@ function CatalogItemDocView({
   onOpenChatDrawer,
 }: {
   entry: CatalogEntry;
+  /** Rendered inside the line-item drawer: actions fill that form instead of opening a new item. */
+  embedded?: boolean;
+  catalog: CatalogEntry[];
+  canManage: boolean;
+  onEntryChanged?: (entry: CatalogEntry) => void;
   isMobile: boolean;
   hasActiveInitiative: boolean;
   onSelectSlug: (slug: string) => void;
@@ -701,9 +782,50 @@ function CatalogItemDocView({
 }) {
   const doc = useMemo(() => getCatalogItemDoc(entry), [entry]);
   const isCost = entry.kind === 'cost';
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = async () => {
+    if (!window.confirm(`Discard edits to the ${entry.id} documentation and restore the shipped version?`)) return;
+    setResetting(true);
+    try {
+      onEntryChanged?.(await api.resetCatalogDoc(entry.id));
+    } catch (err) {
+      notifications.show({
+        color: 'red',
+        title: 'Reset failed',
+        message: err instanceof Error ? err.message : 'Unexpected error',
+      });
+    } finally {
+      setResetting(false);
+    }
+  };
 
   return (
     <Stack gap="md" style={{ minWidth: 0 }}>
+      {doc.isTemplate && (
+        <Alert color="yellow" variant="light" title="This documentation page needs to be written">
+          <Stack gap="xs">
+            <Text size="sm">
+              It was created automatically for this new template. Each section below shows what to fill in.
+            </Text>
+            {canManage && (
+              <Button size="xs" w="fit-content" leftSection={<IconEdit size={13} />} onClick={() => setEditorOpen(true)}>
+                Fill Out Documentation
+              </Button>
+            )}
+          </Stack>
+        </Alert>
+      )}
+      {canManage && (
+        <CatalogDocEditor
+          entry={entry}
+          catalog={catalog}
+          opened={editorOpen}
+          onClose={() => setEditorOpen(false)}
+          onSaved={(updated) => onEntryChanged?.(updated)}
+        />
+      )}
       {/* Header Card */}
       <Paper withBorder p={{ base: 'sm', sm: 'md' }} radius="md" bg="var(--bg-surface)">
         <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
@@ -728,12 +850,46 @@ function CatalogItemDocView({
             <Title order={2} size={isMobile ? 'h3' : 'h2'} mb={4}>
               {entry.name}
             </Title>
-            <Text size="sm" c="var(--text-muted)">
-              {doc.headline}
-            </Text>
+            {doc.headline ? (
+              <Text size="sm" c="var(--text-muted)">
+                {doc.headline}
+              </Text>
+            ) : (
+              <DocText text="" prompt="a one-sentence headline." />
+            )}
+            {doc.isEdited && entry.doc && (
+              <Text size="xs" c="var(--text-muted)" mt={4}>
+                Edited {new Date(entry.doc.updated_at).toLocaleDateString()}
+                {entry.doc.updated_by ? ` by ${entry.doc.updated_by}` : ''}
+              </Text>
+            )}
           </div>
 
           <Group gap="xs" wrap="wrap">
+            {canManage && (
+              <Button
+                type="button"
+                size="xs"
+                variant="default"
+                leftSection={<IconEdit size={13} />}
+                onClick={() => setEditorOpen(true)}
+              >
+                Edit Page
+              </Button>
+            )}
+            {canManage && entry.is_builtin && entry.doc && (
+              <Button
+                type="button"
+                size="xs"
+                variant="subtle"
+                color="gray"
+                loading={resetting}
+                leftSection={<IconArrowBackUp size={13} />}
+                onClick={handleReset}
+              >
+                Reset to Default
+              </Button>
+            )}
             {onOpenChatDrawer && (
               <Button
                 type="button"
@@ -753,7 +909,7 @@ function CatalogItemDocView({
                 leftSection={<IconPlus size={14} />}
                 onClick={() => onUseTemplate({ catalog_id: entry.id })}
               >
-                Add to Initiative
+                {embedded ? 'Use This Template' : 'Add to Initiative'}
               </Button>
             )}
           </Group>
@@ -767,18 +923,14 @@ function CatalogItemDocView({
             <Title order={4} mb={4}>
               What It Measures
             </Title>
-            <Text size="sm" c="var(--text-body)" lh={1.6}>
-              {doc.whatItMeasures}
-            </Text>
+            <DocText text={doc.whatItMeasures} prompt="the quantity being valued, its unit, and where the numbers come from." />
           </div>
           <Divider color="var(--border-divider)" />
           <div>
             <Title order={4} mb={4}>
               Economic Rationale
             </Title>
-            <Text size="sm" c="var(--text-body)" lh={1.6}>
-              {doc.economicRationale}
-            </Text>
+            <DocText text={doc.economicRationale} prompt="why this is a real cost or benefit and how it shows up in financials." />
           </div>
         </Stack>
       </Paper>
@@ -789,11 +941,15 @@ function CatalogItemDocView({
           <Title order={5} mb="xs" c="var(--text-heading)">
             When to Use {entry.id}
           </Title>
-          <ul className="docs-list">
-            {doc.whenToUse.map((item, idx) => (
-              <li key={idx}>{item}</li>
-            ))}
-          </ul>
+          {doc.whenToUse.length === 0 ? (
+            <DocText text="" prompt="the situations this template is meant for." />
+          ) : (
+            <ul className="docs-list">
+              {doc.whenToUse.map((item, idx) => (
+                <li key={idx}>{item}</li>
+              ))}
+            </ul>
+          )}
         </Paper>
 
         <Paper withBorder p={{ base: 'sm', sm: 'md' }} radius="md" bg="var(--bg-surface)">
@@ -801,6 +957,9 @@ function CatalogItemDocView({
             When to Use Another Template
           </Title>
           <Stack gap="xs">
+            {doc.whenNotToUse.length === 0 && (
+              <DocText text="" prompt="cases that belong in a different template, and which one." />
+            )}
             {doc.whenNotToUse.map((alt, idx) => (
               <div key={idx}>
                 <Text size="sm" c="var(--text-body)" lh={1.5}>
@@ -832,9 +991,9 @@ function CatalogItemDocView({
             <Title order={4} mb={4}>
               Formula & Parameter Reference
             </Title>
-            <Text size="sm" c="var(--text-muted)" mb="xs">
-              {doc.formulaPlainEnglish}
-            </Text>
+            <Box mb="xs">
+              <DocText text={doc.formulaPlainEnglish} prompt="explain the calculation below in words." />
+            </Box>
             <Code block style={CODE_BLOCK_STYLE}>
               {entry.formula_description}
             </Code>
@@ -954,33 +1113,25 @@ function CatalogItemDocView({
             <Text size="xs" fw={600} c="var(--text-heading)" mb={2}>
               Active Years
             </Text>
-            <Text size="xs" c="var(--text-body)" lh={1.5}>
-              {doc.modelingTips.schedule}
-            </Text>
+            <DocText size="xs" text={doc.modelingTips.schedule} prompt="which years this item should be active." />
           </Paper>
           <Paper withBorder p="xs" radius="sm" bg="var(--bg-subtle)">
             <Text size="xs" fw={600} c="var(--text-heading)" mb={2}>
               Ramp Profile
             </Text>
-            <Text size="xs" c="var(--text-body)" lh={1.5}>
-              {doc.modelingTips.ramp}
-            </Text>
+            <DocText size="xs" text={doc.modelingTips.ramp} prompt="which ramp profile fits how the value builds up." />
           </Paper>
           <Paper withBorder p="xs" radius="sm" bg="var(--bg-subtle)">
             <Text size="xs" fw={600} c="var(--text-heading)" mb={2}>
               Monte Carlo Distribution
             </Text>
-            <Text size="xs" c="var(--text-body)" lh={1.5}>
-              {doc.modelingTips.uncertainty}
-            </Text>
+            <DocText size="xs" text={doc.modelingTips.uncertainty} prompt="which inputs are uncertain and how to model them." />
           </Paper>
           <Paper withBorder p="xs" radius="sm" bg="var(--bg-subtle)">
             <Text size="xs" fw={600} c="var(--text-heading)" mb={2}>
               Correlation Group
             </Text>
-            <Text size="xs" c="var(--text-body)" lh={1.5}>
-              {doc.modelingTips.correlation}
-            </Text>
+            <DocText size="xs" text={doc.modelingTips.correlation} prompt="which other line items move together with this one." />
           </Paper>
         </SimpleGrid>
       </Paper>
@@ -994,6 +1145,9 @@ function CatalogItemDocView({
               {entry.guardrail_notes}
             </div>
           )}
+          {doc.isTemplate && !entry.guardrail_notes && doc.guardrailDeepDive.length === 0 && (
+            <DocText text="" prompt="what overlaps with other templates and how to avoid double counting." />
+          )}
           {doc.guardrailDeepDive.length > 0 && (
             <ul className="docs-list">
               {doc.guardrailDeepDive.map((note, idx) => (
@@ -1006,7 +1160,7 @@ function CatalogItemDocView({
 
       {/* Worked Examples */}
       <Stack gap="sm" style={{ minWidth: 0 }}>
-        <Title order={3}>Worked Examples ({doc.examples.length})</Title>
+        {doc.examples.length > 0 && <Title order={3}>Worked Examples ({doc.examples.length})</Title>}
 
         {doc.examples.map((ex, idx) => {
           const computed = computeExampleResult(entry.formula_type, ex);
@@ -1048,7 +1202,7 @@ function CatalogItemDocView({
                         })
                       }
                     >
-                      Try in Initiative
+                      {embedded ? 'Fill Form With Example' : 'Try in Initiative'}
                     </Button>
                   )}
                 </Group>

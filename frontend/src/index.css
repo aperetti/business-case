@@ -783,3 +783,20 @@ fieldset {
   background: var(--compare-b);
   transition: width 260ms ease;
 }
+
+/* Briefly highlight a docs section reached through a deep link (e.g. a form field's info tag). */
+.docs-section {
+  scroll-margin-top: 72px;
+  transition: box-shadow 300ms ease, border-color 300ms ease;
+}
+
+.docs-section[data-highlight='true'] {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

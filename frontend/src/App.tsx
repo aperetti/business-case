@@ -70,6 +70,7 @@ import type {
   BCAUpdate,
   CatalogEntry,
   CatalogEntryCreate,
+  CatalogEntryUpdate,
   InitiativeCreate,
   InitiativeDetail,
   InitiativeItemCreate,
@@ -819,8 +820,27 @@ export default function App() {
     notifications.show({
       color: 'teal',
       title: 'Catalog template added',
-      message: `${created.id} — ${created.name}`,
+      message: `${created.id} — ${created.name}. A documentation page was created for you to fill out.`,
     });
+    handleOpenDoc(created.id);
+  };
+
+  const handleUpdateCatalogEntry = async (id: string, payload: CatalogEntryUpdate) => {
+    const updated = await api.updateCatalogEntry(id, payload);
+    handleCatalogEntryChanged(updated);
+    notifications.show({ color: 'teal', title: 'Catalog template updated', message: `${updated.id} — ${updated.name}` });
+    if (initiativeDetail) {
+      // Line item values may change when a template's formula or defaults change.
+      const [list] = await Promise.all([
+        api.listInitiatives(),
+        refreshInitiativeData(initiativeDetail.id, activeBcaId),
+      ]);
+      setInitiatives(list);
+    }
+  };
+
+  const handleCatalogEntryChanged = (updated: CatalogEntry) => {
+    setCatalog((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
   };
 
   const existingValueStreams = useMemo(() => {
@@ -832,6 +852,9 @@ export default function App() {
   }, [initiativeDetail]);
 
   const authRequired = Boolean(ssoPublic?.enabled && ssoPublic?.configured && ssoPublic?.enforce_sso);
+  const canManageCatalog = authUser
+    ? authUser.permissions.includes('catalog:manage')
+    : !authRequired;
   const canAccessAdmin = !authRequired || Boolean(authUser?.is_admin);
 
   if (authPhase === 'checking') {
@@ -1271,6 +1294,8 @@ export default function App() {
               <CatalogManager
                 catalog={catalog}
                 onCreateEntry={handleCreateCatalogEntry}
+                onUpdateEntry={handleUpdateCatalogEntry}
+                canManage={canManageCatalog}
                 onOpenDoc={handleOpenDoc}
               />
             </Tabs.Panel>
@@ -1286,6 +1311,8 @@ export default function App() {
                 activeInitiative={initiativeDetail}
                 onOpenAdmin={() => handleOpenAdmin('ai')}
                 onOpenChatDrawer={docsAgentAvailable ? openChatDrawer : undefined}
+                canManageCatalog={canManageCatalog}
+                onCatalogEntryChanged={handleCatalogEntryChanged}
               />
             </Tabs.Panel>
           </Tabs>

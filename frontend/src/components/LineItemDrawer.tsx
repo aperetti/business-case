@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Accordion,
   Alert,
@@ -17,8 +17,9 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { IconAlertCircle, IconBook } from '@tabler/icons-react';
-import { evaluateCatalogFormula } from '../data/catalogDocs';
+import { IconAlertCircle, IconArrowLeft, IconBook } from '@tabler/icons-react';
+import { GUIDE_PAGES, evaluateCatalogFormula, getCatalogItemDoc } from '../data/catalogDocs';
+import { CatalogItemDocView, GuidePageView } from './DocsSite';
 import type {
   CatalogEntry,
   DistributionKind,
@@ -29,6 +30,7 @@ import type {
   UncertaintySpec,
 } from '../types/api';
 import { formatCurrency } from '../utils/format';
+import { FieldDocNavigationContext, FieldInfo, FieldLabel } from './FieldInfo';
 
 interface Props {
   opened: boolean;
@@ -98,7 +100,7 @@ function DistributionEditor({
     <Stack gap="xs">
       <SimpleGrid cols={{ base: 1, sm: showSpread ? 2 : 1 }} spacing="xs">
         <Select
-          label={title}
+          label={<FieldLabel field="item.distribution">{title}</FieldLabel>}
           data={DIST_OPTIONS}
           value={kind}
           onChange={(val) => onChange(defaultDistSpec(baseValue, (val as DistributionKind) || 'fixed'))}
@@ -107,7 +109,7 @@ function DistributionEditor({
         />
         {showSpread && (
           <NumberInput
-            label="Std Dev (% of base)"
+            label={<FieldLabel field="item.std_pct">Std Dev (% of base)</FieldLabel>}
             size="xs"
             min={0}
             max={300}
@@ -127,7 +129,7 @@ function DistributionEditor({
       {showThreePoint && (
         <SimpleGrid cols={3} spacing="xs">
           <NumberInput
-            label="Low"
+            label={<FieldLabel field="item.three_point">Low</FieldLabel>}
             size="xs"
             hideControls={isMobile}
             min={minVal ?? undefined}
@@ -142,7 +144,7 @@ function DistributionEditor({
             }
           />
           <NumberInput
-            label="Mode"
+            label={<FieldLabel field="item.three_point">Mode</FieldLabel>}
             size="xs"
             hideControls={isMobile}
             min={minVal ?? undefined}
@@ -157,7 +159,7 @@ function DistributionEditor({
             }
           />
           <NumberInput
-            label="High"
+            label={<FieldLabel field="item.three_point">High</FieldLabel>}
             size="xs"
             hideControls={isMobile}
             min={minVal ?? undefined}
@@ -204,10 +206,60 @@ export function LineItemDrawer({
   const [antiDoubleCountTag, setAntiDoubleCountTag] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The template guide is shown on the back of the drawer so the form keeps its state.
+  const [guideSlug, setGuideSlug] = useState<string | null>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const formScrollTop = useRef(0);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const guideButtonRef = useRef<HTMLButtonElement>(null);
+
+  const scrollContainer = () => sceneRef.current?.closest<HTMLElement>('.mantine-Drawer-content') ?? null;
+
+  const openGuide = (slug: string) => {
+    const container = scrollContainer();
+    formScrollTop.current = container?.scrollTop ?? 0;
+    setGuideSlug(slug);
+    container?.scrollTo({ top: 0 });
+    requestAnimationFrame(() => backButtonRef.current?.focus({ preventScroll: true }));
+  };
+
+  const closeGuide = () => {
+    setGuideSlug(null);
+    requestAnimationFrame(() => {
+      scrollContainer()?.scrollTo({ top: formScrollTop.current });
+      guideButtonRef.current?.focus({ preventScroll: true });
+    });
+  };
+
+  useEffect(() => {
+    if (!opened) setGuideSlug(null);
+  }, [opened]);
+
+  const [guideBase, guideAnchor] = (guideSlug ?? '').split('#');
+  const guideEntry = guideBase ? catalog.find((c) => c.id === guideBase) : undefined;
+  const guidePage = guideBase && !guideEntry ? GUIDE_PAGES.find((g) => g.slug === guideBase) : undefined;
+
+  // After flipping to a field's docs section, bring that section into view.
+  useEffect(() => {
+    if (!guideAnchor) return;
+    const timer = window.setTimeout(() => {
+      const el = sceneRef.current?.querySelector<HTMLElement>(`#${CSS.escape(guideAnchor)}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.setAttribute('data-highlight', 'true');
+        window.setTimeout(() => el.removeAttribute('data-highlight'), 2000);
+      }
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [guideSlug, guideAnchor]);
 
   const selectedCatalog = useMemo(
     () => catalog.find((c) => c.id === catalogId) || catalog[0],
     [catalog, catalogId]
+  );
+  const selectedDoc = useMemo(
+    () => (selectedCatalog ? getCatalogItemDoc(selectedCatalog) : null),
+    [selectedCatalog]
   );
 
   const catalogSelectData = useMemo(() => {
@@ -222,6 +274,47 @@ export function LineItemDrawer({
       { group: 'Benefits', items: benefits },
     ];
   }, [catalog]);
+
+  const applyDraft = useCallback(
+    (draft: Partial<InitiativeItemCreate>) => {
+      const targetCatalog =
+        (draft.catalog_id && catalog.find((c) => c.id === draft.catalog_id)) ||
+        catalog[0];
+      const clampedStart = Math.min(Math.max(1, draft.start_year ?? 1), horizonYears);
+      const clampedEnd = Math.min(
+        Math.max(clampedStart, draft.end_year ?? horizonYears),
+        horizonYears
+      );
+      const span = Math.max(1, clampedEnd - clampedStart + 1);
+      const sourceWeights = draft.ramp_weights;
+      const alignedWeights =
+        sourceWeights && sourceWeights.length > 0
+          ? Array.from({ length: span }, (_, idx) => sourceWeights[idx] ?? 1.0)
+          : Array.from({ length: span }, () => 1.0);
+      const defaults: Record<string, number> = {};
+      for (const p of targetCatalog.parameters) defaults[p.key] = p.default_value;
+  
+      setCatalogId(targetCatalog.id);
+      setLabel(draft.label || targetCatalog.name);
+      setValueStream(
+        draft.value_stream ||
+          targetCatalog.value_stream_stage ||
+          existingValueStreams[0] ||
+          'Core'
+      );
+      setStartYear(clampedStart);
+      setEndYear(clampedEnd);
+      setRampProfile(draft.ramp_profile || 'immediate');
+      setRampWeights(alignedWeights);
+      setParamValues({ ...defaults, ...(draft.param_values || {}) });
+      setItemMultSpec(draft.uncertainty_spec?.item_multiplier || { distribution: 'fixed' });
+      setParamDistSpecs(draft.uncertainty_spec?.parameters || {});
+      setCorrelationGroup(draft.uncertainty_spec?.correlation_group || '');
+      setCorrelationRho(draft.uncertainty_spec?.correlation_rho ?? 0.7);
+      setAntiDoubleCountTag(draft.anti_double_count_tag || '');
+    },
+    [catalog, existingValueStreams, horizonYears]
+  );
 
   useEffect(() => {
     if (!opened) return;
@@ -246,41 +339,7 @@ export function LineItemDrawer({
       setCorrelationRho(editingItem.uncertainty_spec?.correlation_rho ?? 0.7);
       setAntiDoubleCountTag(editingItem.anti_double_count_tag || '');
     } else if (!editingItem && initialDraft && catalog.length > 0) {
-      const targetCatalog =
-        (initialDraft.catalog_id && catalog.find((c) => c.id === initialDraft.catalog_id)) ||
-        catalog[0];
-      const clampedStart = Math.min(Math.max(1, initialDraft.start_year ?? 1), horizonYears);
-      const clampedEnd = Math.min(
-        Math.max(clampedStart, initialDraft.end_year ?? horizonYears),
-        horizonYears
-      );
-      const span = Math.max(1, clampedEnd - clampedStart + 1);
-      const sourceWeights = initialDraft.ramp_weights;
-      const alignedWeights =
-        sourceWeights && sourceWeights.length > 0
-          ? Array.from({ length: span }, (_, idx) => sourceWeights[idx] ?? 1.0)
-          : Array.from({ length: span }, () => 1.0);
-      const defaults: Record<string, number> = {};
-      for (const p of targetCatalog.parameters) defaults[p.key] = p.default_value;
-
-      setCatalogId(targetCatalog.id);
-      setLabel(initialDraft.label || targetCatalog.name);
-      setValueStream(
-        initialDraft.value_stream ||
-          targetCatalog.value_stream_stage ||
-          existingValueStreams[0] ||
-          'Core'
-      );
-      setStartYear(clampedStart);
-      setEndYear(clampedEnd);
-      setRampProfile(initialDraft.ramp_profile || 'immediate');
-      setRampWeights(alignedWeights);
-      setParamValues({ ...defaults, ...(initialDraft.param_values || {}) });
-      setItemMultSpec(initialDraft.uncertainty_spec?.item_multiplier || { distribution: 'fixed' });
-      setParamDistSpecs(initialDraft.uncertainty_spec?.parameters || {});
-      setCorrelationGroup(initialDraft.uncertainty_spec?.correlation_group || '');
-      setCorrelationRho(initialDraft.uncertainty_spec?.correlation_rho ?? 0.7);
-      setAntiDoubleCountTag(initialDraft.anti_double_count_tag || '');
+      applyDraft(initialDraft);
     } else if (catalog.length > 0) {
       const first = catalog[0];
       setCatalogId(first.id);
@@ -299,7 +358,7 @@ export function LineItemDrawer({
       setCorrelationRho(0.7);
       setAntiDoubleCountTag('');
     }
-  }, [opened, editingItem, initialDraft, catalog, horizonYears, existingValueStreams]);
+  }, [opened, editingItem, initialDraft, catalog, horizonYears, existingValueStreams, applyDraft]);
 
   const handleCatalogChange = (nextId: string | null) => {
     if (!nextId) return;
@@ -436,11 +495,24 @@ export function LineItemDrawer({
     <Drawer
       opened={opened}
       onClose={onClose}
+      closeOnEscape={!guideSlug}
       position="right"
       size={isMobile ? '100%' : 'lg'}
       padding={isMobile ? 'sm' : 'md'}
-      title={editingItem ? `Edit Line Item: ${editingItem.label}` : 'Add Catalog Line Item'}
+      title={
+        guideSlug
+          ? guideEntry
+            ? `Template guide: ${guideEntry.id}`
+            : (guidePage?.title ?? 'Documentation')
+          : editingItem
+            ? `Edit Line Item: ${editingItem.label}`
+            : 'Add Catalog Line Item'
+      }
     >
+      <div className="catalog-flip-scene" ref={sceneRef}>
+      <div className="catalog-flip-inner" data-flipped={guideSlug ? 'true' : undefined}>
+      <div className="catalog-flip-face catalog-flip-front" aria-hidden={Boolean(guideSlug)}>
+      <FieldDocNavigationContext.Provider value={openGuide}>
       <Box component="form" onSubmit={handleFormSubmit}>
         <Stack gap="md">
           {formError && (
@@ -450,7 +522,7 @@ export function LineItemDrawer({
           )}
 
           <Select
-            label="Catalog Template"
+            label={<FieldLabel field="item.catalog">Catalog Template</FieldLabel>}
             data={catalogSelectData}
             value={selectedCatalog?.id || null}
             onChange={handleCatalogChange}
@@ -495,14 +567,12 @@ export function LineItemDrawer({
                 {onOpenDoc && (
                   <Group justify="flex-end">
                     <Button
+                      ref={guideButtonRef}
                       type="button"
                       variant="subtle"
                       size="compact-xs"
                       leftSection={<IconBook size={13} />}
-                      onClick={() => {
-                        onClose();
-                        onOpenDoc(selectedCatalog.id);
-                      }}
+                      onClick={() => openGuide(selectedCatalog.id)}
                     >
                       Template guide
                     </Button>
@@ -518,21 +588,21 @@ export function LineItemDrawer({
             </Text>
             <Stack gap="xs">
               <TextInput
-                label="Line Item Label"
+                label={<FieldLabel field="item.label">Line Item Label</FieldLabel>}
                 value={label}
                 onChange={(e) => setLabel(e.currentTarget.value)}
                 required
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                 <Autocomplete
-                  label="Value Stream"
+                  label={<FieldLabel field="item.value_stream">Value Stream</FieldLabel>}
                   data={existingValueStreams}
                   value={valueStream}
                   onChange={setValueStream}
                   required
                 />
                 <TextInput
-                  label="Anti-Double-Count Tag"
+                  label={<FieldLabel field="item.anti_double_count">Anti-Double-Count Tag</FieldLabel>}
                   placeholder="Optional overlap tag (e.g., eng-capacity)"
                   value={antiDoubleCountTag}
                   onChange={(e) => setAntiDoubleCountTag(e.currentTarget.value)}
@@ -541,7 +611,7 @@ export function LineItemDrawer({
 
               <SimpleGrid cols={2} spacing="xs">
                 <NumberInput
-                  label="Start Year"
+                  label={<FieldLabel field="item.active_years">Start Year</FieldLabel>}
                   min={1}
                   max={horizonYears}
                   value={startYear}
@@ -549,7 +619,7 @@ export function LineItemDrawer({
                   required
                 />
                 <NumberInput
-                  label="End Year"
+                  label={<FieldLabel field="item.active_years">End Year</FieldLabel>}
                   min={1}
                   max={horizonYears}
                   value={endYear}
@@ -559,7 +629,7 @@ export function LineItemDrawer({
               </SimpleGrid>
 
               <Select
-                label="Ramp Profile"
+                label={<FieldLabel field="item.ramp">Ramp Profile</FieldLabel>}
                 data={RAMP_OPTIONS}
                 value={rampProfile}
                 onChange={(v) => setRampProfile((v as RampProfile) || 'immediate')}
@@ -568,8 +638,9 @@ export function LineItemDrawer({
 
               {rampProfile === 'custom_weights' && (
                 <Stack gap={4}>
-                  <Text size="xs" fw={500} c="var(--text-body)">
+                  <Text size="xs" fw={500} c="var(--text-body)" className="field-label">
                     Custom Annual Weights (Y{startYear}–Y{endYear}, normalized if &gt; 1.0)
+                    <FieldInfo field="item.ramp_weights" />
                   </Text>
                   <SimpleGrid cols={{ base: 2, xs: 3, sm: 5 }} spacing="xs">
                     {rampWeights.map((w, idx) => (
@@ -596,15 +667,32 @@ export function LineItemDrawer({
 
           {selectedCatalog && (
             <Box component="fieldset" style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 12 }}>
-              <Text component="legend" size="xs" fw={600} px={6} c="var(--text-muted)">
+              <Text component="legend" size="xs" fw={600} px={6} c="var(--text-muted)" className="field-label">
                 Catalog Parameters
+                <FieldInfo field="item.parameters" />
               </Text>
               <Stack gap="xs">
                 <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                   {selectedCatalog.parameters.map((param) => (
                     <NumberInput
                       key={param.key}
-                      label={`${param.label}${param.unit ? ` (${param.unit})` : ''}`}
+                      label={
+                        <FieldLabel
+                          custom={{
+                            label: param.label,
+                            help: (() => {
+                              const g = selectedDoc?.parameterGuidance[param.key];
+                              if (!g?.guidance) {
+                                return `Input to the ${selectedCatalog.id} formula. The template guide explains how to estimate it.`;
+                              }
+                              return g.typicalRange ? `${g.guidance} Typical: ${g.typicalRange}.` : g.guidance;
+                            })(),
+                            route: selectedCatalog.id,
+                          }}
+                        >
+                          {`${param.label}${param.unit ? ` (${param.unit})` : ''}`}
+                        </FieldLabel>
+                      }
                       description={
                         param.min_value !== null || param.max_value !== null
                           ? `Bounds: ${param.min_value ?? '−∞'} to ${param.max_value ?? '∞'}`
@@ -650,15 +738,16 @@ export function LineItemDrawer({
             <Stack gap="sm">
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                 <TextInput
-                  label="Correlation Group"
+                  label={<FieldLabel field="item.correlation_group">Correlation Group</FieldLabel>}
                   placeholder="e.g., adoption or delivery_effort"
                   value={correlationGroup}
                   onChange={(e) => setCorrelationGroup(e.currentTarget.value)}
                   size="xs"
                 />
                 <div>
-                  <Text size="xs" fw={500} mb={4} c="var(--text-body)">
+                  <Text size="xs" fw={500} mb={4} c="var(--text-body)" className="field-label">
                     Correlation Strength (ρ = {correlationRho.toFixed(2)})
+                    <FieldInfo field="item.correlation_rho" />
                   </Text>
                   <Slider
                     min={-0.95}
@@ -727,6 +816,71 @@ export function LineItemDrawer({
           </Group>
         </Stack>
       </Box>
+      </FieldDocNavigationContext.Provider>
+      </div>
+
+      <div
+        className="catalog-flip-face catalog-flip-back"
+        aria-hidden={!guideSlug}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            closeGuide();
+          }
+        }}
+      >
+        <Stack gap="sm">
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Button
+              ref={backButtonRef}
+              type="button"
+              variant="default"
+              size="xs"
+              leftSection={<IconArrowLeft size={13} />}
+              onClick={closeGuide}
+            >
+              Back to line item
+            </Button>
+            {onOpenDoc && guideSlug && (
+              <Button
+                type="button"
+                variant="subtle"
+                size="compact-xs"
+                leftSection={<IconBook size={13} />}
+                onClick={() => {
+                  onClose();
+                  onOpenDoc(guideSlug);
+                }}
+              >
+                Open in Documentation
+              </Button>
+            )}
+          </Group>
+          {guideEntry ? (
+            <CatalogItemDocView
+              entry={guideEntry}
+              embedded
+              catalog={catalog}
+              canManage={false}
+              isMobile
+              hasActiveInitiative
+              onSelectSlug={openGuide}
+              onUseTemplate={(draft) => {
+                if (draft.label) {
+                  applyDraft(draft);
+                } else if (draft.catalog_id) {
+                  handleCatalogChange(draft.catalog_id);
+                }
+                closeGuide();
+              }}
+            />
+          ) : guidePage ? (
+            <GuidePageView guide={guidePage} catalog={catalog} isMobile onSelectSlug={openGuide} />
+          ) : null}
+        </Stack>
+      </div>
+      </div>
+      </div>
     </Drawer>
   );
 }
