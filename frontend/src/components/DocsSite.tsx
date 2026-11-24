@@ -467,6 +467,33 @@ export function DocsSite({
   );
 }
 
+function SeeAlsoLinks({
+  links,
+  onSelectSlug,
+}: {
+  links?: { slug: string; label: string }[];
+  onSelectSlug: (slug: string) => void;
+}) {
+  if (!links || links.length === 0) return null;
+  return (
+    <Group gap="xs">
+      {links.map((link) => (
+        <Button
+          key={link.slug}
+          type="button"
+          size="compact-xs"
+          variant="subtle"
+          px={4}
+          rightSection={<IconArrowRight size={12} />}
+          onClick={() => onSelectSlug(link.slug)}
+        >
+          See also: {link.label}
+        </Button>
+      ))}
+    </Group>
+  );
+}
+
 export function GuidePageView({
   guide,
   catalog,
@@ -538,23 +565,7 @@ export function GuidePageView({
               </div>
             )}
 
-            {sec.links && sec.links.length > 0 && (
-              <Group gap="xs">
-                {sec.links.map((link) => (
-                  <Button
-                    key={link.slug}
-                    type="button"
-                    size="compact-xs"
-                    variant="subtle"
-                    px={4}
-                    rightSection={<IconArrowRight size={12} />}
-                    onClick={() => onSelectSlug(link.slug)}
-                  >
-                    See also: {link.label}
-                  </Button>
-                ))}
-              </Group>
-            )}
+            <SeeAlsoLinks links={sec.links} onSelectSlug={onSelectSlug} />
 
             {sec.table && (
               <div
@@ -589,6 +600,27 @@ export function GuidePageView({
                   </Table.Tbody>
                 </Table>
               </div>
+            )}
+
+            {sec.entries && sec.entries.length > 0 && (
+              <Stack gap={0}>
+                {sec.entries.map((entry, idx) => (
+                  <Fragment key={entry.id ?? entry.heading}>
+                    {idx > 0 && <Divider color="var(--border-divider)" />}
+                    <div id={entry.id} className="docs-entry">
+                      <Stack gap={6}>
+                        <Title order={5}>{entry.heading}</Title>
+                        {entry.paragraphs?.map((p, pIdx) => (
+                          <Text key={pIdx} size="sm" c="var(--text-body)" lh={1.6}>
+                            {p}
+                          </Text>
+                        ))}
+                        <SeeAlsoLinks links={entry.links} onSelectSlug={onSelectSlug} />
+                      </Stack>
+                    </div>
+                  </Fragment>
+                ))}
+              </Stack>
             )}
           </Stack>
         </Paper>

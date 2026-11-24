@@ -795,6 +795,19 @@ fieldset {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 
+.docs-entry {
+  scroll-margin-top: 72px;
+  padding: 12px 10px;
+  margin: 0 -10px;
+  border-radius: 8px;
+  transition: background-color 300ms ease, box-shadow 300ms ease;
+}
+
+.docs-entry[data-highlight='true'] {
+  background-color: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
 .field-label {
   display: inline-flex;
   align-items: center;

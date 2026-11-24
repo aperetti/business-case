@@ -346,13 +346,27 @@ export function fieldAnchorId(key: FieldKey): string {
 
 /** Guide page listing every documented field, one deep-linkable section per field. */
 export function buildFieldReferencePage(): GuideDocPage {
-  const sections: GuideSection[] = (Object.entries(FIELD_DOCS) as [FieldKey, FieldDoc][]).map(([key, doc]) => ({
-    id: fieldAnchorId(key),
-    heading: doc.label,
-    eyebrow: doc.group,
-    paragraphs: [doc.help, ...(doc.details ?? [])],
-    links: doc.seeAlso ? [doc.seeAlso] : undefined,
-  }));
+  // One box per field group, in the order groups first appear in the registry.
+  const sections: GuideSection[] = [];
+  const byGroup = new Map<string, GuideSection>();
+  for (const [key, doc] of Object.entries(FIELD_DOCS) as [FieldKey, FieldDoc][]) {
+    let section = byGroup.get(doc.group);
+    if (!section) {
+      section = {
+        id: `group-${doc.group.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+        heading: doc.group,
+        entries: [],
+      };
+      byGroup.set(doc.group, section);
+      sections.push(section);
+    }
+    section.entries!.push({
+      id: fieldAnchorId(key),
+      heading: doc.label,
+      paragraphs: [doc.help, ...(doc.details ?? [])],
+      links: doc.seeAlso ? [doc.seeAlso] : undefined,
+    });
+  }
   return {
     slug: FIELD_REFERENCE_SLUG,
     title: 'Form Field Reference',

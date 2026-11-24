@@ -12,6 +12,15 @@ export interface GuideTable {
   rows: string[][];
 }
 
+/** A titled entry inside a section box (e.g. one form field in a field group). */
+export interface GuideEntry {
+  /** Anchor id for deep links (#docs/<slug>#<id>). */
+  id?: string;
+  heading: string;
+  paragraphs?: string[];
+  links?: { slug: string; label: string }[];
+}
+
 export interface GuideSection {
   /** Anchor id for deep links (#docs/<slug>#<id>). */
   id?: string;
@@ -25,6 +34,8 @@ export interface GuideSection {
   formula?: string;
   callout?: string;
   table?: GuideTable;
+  /** Entries rendered inside this section's box, separated by dividers. */
+  entries?: GuideEntry[];
 }
 
 export interface GuideDocPage {
