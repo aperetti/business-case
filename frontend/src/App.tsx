@@ -1198,6 +1198,9 @@ export default function App() {
                     onSelectBca={handleSelectBca}
                     onOpenCreateBca={handleOpenCreateBca}
                     onOpenCompare={() => setActiveTab('compare')}
+                    onDownloadReport={() =>
+                      activeBcaId ? api.downloadBcaReport(initiativeDetail.id, activeBcaId) : Promise.resolve()
+                    }
                   />
                   <InitiativeSettingsBar
                     initiative={initiativeDetail}
@@ -1252,6 +1255,16 @@ export default function App() {
                     onSelectBca={handleSelectBca}
                     onOpenCreateBca={handleOpenCreateBca}
                     onOpenCompare={() => setActiveTab('compare')}
+                    onDownloadReport={() =>
+                      activeBcaId
+                        ? api.downloadBcaReport(
+                            initiativeDetail.id,
+                            activeBcaId,
+                            // Report on the run being viewed, if it belongs to this BCA.
+                            simResult && simResult.bca_id === activeBcaId ? simResult.run_id : null
+                          )
+                        : Promise.resolve()
+                    }
                   />
                   <MonteCarloDashboard
                     initiative={initiativeDetail}

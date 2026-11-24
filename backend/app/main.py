@@ -15,6 +15,7 @@ from app.api.catalog import router as catalog_router
 from app.api.chat import router as chat_router
 from app.api.initiatives import router as initiatives_router
 from app.api.odata import router_alias as odata_alias_router, router_v4 as odata_v4_router
+from app.api.reports import router as reports_router
 from app.api.simulations import router as simulations_router
 from app.api.workflows import admin_router as workflows_admin_router, router as approvals_router
 from app.config import get_settings, load_dotenv_files
@@ -105,6 +106,8 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Lets the browser read report download filenames on cross-origin deployments.
+        expose_headers=["Content-Disposition"],
     )
 
     @application.exception_handler(LockedError)
@@ -123,6 +126,7 @@ def create_app(*, db_path: Path | None = None, seed_demo: bool = True, load_env:
         return HealthResponse(status="ok", database="ok", catalog_count=catalog_count)
 
     application.include_router(catalog_router)
+    application.include_router(reports_router)
     application.include_router(simulations_router)
     application.include_router(initiatives_router)
     application.include_router(admin_router)

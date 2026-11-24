@@ -166,7 +166,60 @@ async function request<T>(path: string, init?: RequestInit, hasRetried = false):
   return parsed as T;
 }
 
+/** Fetch a binary file (e.g. a PDF report) with auth and trigger a browser download. */
+async function downloadFile(path: string, fallbackName: string, hasRetried = false): Promise<void> {
+  const headers = await buildRequestHeaders(path, { Accept: 'application/pdf' }, hasRetried);
+  headers.delete('Content-Type');
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (res.status === 401 && !hasRetried && authTokenProvider && shouldAttachAuthHeader(path)) {
+    return downloadFile(path, fallbackName, true);
+  }
+  if (!res.ok) {
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(await res.text());
+    } catch {
+      parsed = null;
+    }
+    throw new ApiError(res.status, extractErrorMessage(parsed, res.status));
+  }
+  const disposition = res.headers.get('content-disposition') || '';
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = match?.[1] || fallbackName;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export const api = {
+  downloadBcaReport: (initiativeId: string, bcaId: string, runId?: string | null) => {
+    const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+    return downloadFile(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/${encodeURIComponent(bcaId)}/report.pdf${qs}`,
+      'business-case-report.pdf'
+    );
+  },
+
+  downloadComparisonReport: (
+    initiativeId: string,
+    bcaAId: string,
+    bcaBId: string,
+    comparisonId?: string | null
+  ) => {
+    const qs = new URLSearchParams({ bca_a_id: bcaAId, bca_b_id: bcaBId });
+    if (comparisonId) qs.set('comparison_id', comparisonId);
+    return downloadFile(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/compare/report.pdf?${qs.toString()}`,
+      'business-case-comparison.pdf'
+    );
+  },
+
   health: () => request<HealthResponse>('/health'),
 
   listCatalog: (params?: { domain?: string; kind?: CatalogKind; search?: string }) => {

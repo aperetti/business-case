@@ -75,7 +75,9 @@ import {
   formatRatio,
   formatYearLabel,
 } from '../utils/format';
+import { api } from '../api/client';
 import { FieldLabel } from './FieldInfo';
+import { ReportDownloadButton } from './ReportDownloadButton';
 
 interface Props {
   initiative: InitiativeDetail;
@@ -618,6 +620,19 @@ export function BCAComparisonDashboard({
                 >
                   {whatIfOpen ? 'Hide What-If' : 'What-If Overrides'}
                 </Button>
+                <ReportDownloadButton
+                  size="sm"
+                  fullWidth={isMobile}
+                  disabled={!bcaA || !bcaB}
+                  download={() =>
+                    api.downloadComparisonReport(
+                      initiative.id,
+                      bcaAId,
+                      bcaBId,
+                      matchedComparison?.comparison_id ?? null
+                    )
+                  }
+                />
                 <Button
                   type="submit"
                   size="sm"

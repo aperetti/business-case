@@ -22,6 +22,7 @@ import { z } from 'zod';
 import type { BCACreate, BCASummary } from '../types/api';
 import { formatCompactCurrency, formatPercent, zodFormValidate } from '../utils/format';
 import { FieldLabel } from './FieldInfo';
+import { ReportDownloadButton } from './ReportDownloadButton';
 
 interface BarProps {
   bcas: BCASummary[];
@@ -29,6 +30,8 @@ interface BarProps {
   onSelectBca: (bcaId: string) => void;
   onOpenCreateBca: (cloneFromId?: string | null) => void;
   onOpenCompare: () => void;
+  /** Download the PDF report for the active BCA. */
+  onDownloadReport?: () => Promise<void>;
 }
 
 export function BCASelectorBar({
@@ -37,6 +40,7 @@ export function BCASelectorBar({
   onSelectBca,
   onOpenCreateBca,
   onOpenCompare,
+  onDownloadReport,
 }: BarProps) {
   const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
 
@@ -75,6 +79,9 @@ export function BCASelectorBar({
               >
                 Duplicate
               </Button>
+            )}
+            {activeBcaId && onDownloadReport && (
+              <ReportDownloadButton size="xs" download={onDownloadReport} />
             )}
             {bcas.length >= 2 && (
               <Button

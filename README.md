@@ -32,6 +32,15 @@ Initiatives move through **Draft → In Review → Approved / Rejected**. Admins
 - **Email:** configure SMTP on the same admin page. Approvers are emailed when their step starts, and the submitter when a final decision is made. Every notification (sent, failed, or skipped) appears in the page's notification log. Email links use `#initiative/<id>` deep links built from the configured App URL.
 - Managing workflows and email requires the `admin:workflows` permission (granted to Administrator).
 
+## PDF Reports
+
+Two downloadable PDF reports are generated server-side with ReportLab:
+
+- **Business case report**: the **PDF Report** button on the Business Cases bar exports the active BCA: an executive summary, KPIs, assumptions, yearly cash flow, value streams, the Monte Carlo risk profile, top uncertainty drivers and line items. On the Monte Carlo tab it uses the run currently being viewed; elsewhere it uses the latest run. API: `GET /api/initiatives/{id}/bcas/{bca_id}/report.pdf[?run_id=]`.
+- **Comparison report**: the **PDF Report** button on the Compare BCAs tab exports A vs B. It includes side-by-side metrics with deltas, the head-to-head win probability, NPV over time, distributions, value streams, drivers and an appendix of line items. It uses the selected paired comparison, or else the latest saved one for that pair. Failing that, it uses each BCA's latest run. API: `GET /api/initiatives/{id}/bcas/compare/report.pdf?bca_a_id=&bca_b_id=[&comparison_id=]`.
+
+Deterministic figures always reflect current inputs. If inputs changed after the simulation being reported, the PDF shows a note saying so.
+
 ## Running the Application
 
 ### 1. Backend (FastAPI + SQLite)

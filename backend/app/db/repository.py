@@ -1606,6 +1606,64 @@ def list_bca_comparisons(
     return records
 
 
+def get_simulation_run(db_path: Path, initiative_id: str, run_id: str) -> SimulationResult:
+    """Load one persisted simulation run belonging to an initiative."""
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT sr.*, b.name AS bca_name
+            FROM simulation_runs sr
+            LEFT JOIN initiative_bcas b ON b.id = sr.bca_id
+            WHERE sr.id = ? AND sr.initiative_id = ?
+            """,
+            (run_id, initiative_id),
+        ).fetchone()
+    if not row:
+        raise NotFoundError(f"Simulation run '{run_id}' not found on initiative '{initiative_id}'.")
+    parsed = SimulationResult.model_validate_json(row["summary_json"])
+    return parsed.model_copy(
+        update={
+            "run_id": parsed.run_id or row["id"],
+            "bca_id": parsed.bca_id or row["bca_id"],
+            "bca_name": parsed.bca_name or row["bca_name"],
+        }
+    )
+
+
+def get_bca_comparison(
+    db_path: Path, initiative_id: str, comparison_id: str
+) -> BCAComparisonResult:
+    """Load one persisted BCA comparison belonging to an initiative."""
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM bca_comparisons WHERE id = ? AND initiative_id = ?",
+            (comparison_id, initiative_id),
+        ).fetchone()
+    if not row:
+        raise NotFoundError(f"Comparison '{comparison_id}' not found on initiative '{initiative_id}'.")
+    parsed = BCAComparisonResult.model_validate_json(row["summary_json"])
+    return parsed.model_copy(update={"comparison_id": parsed.comparison_id or row["id"]})
+
+
+def find_latest_bca_comparison(
+    db_path: Path, initiative_id: str, bca_a_id: str, bca_b_id: str
+) -> BCAComparisonResult | None:
+    """Most recent persisted comparison for this exact A/B ordering, if any."""
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM bca_comparisons
+            WHERE initiative_id = ? AND bca_a_id = ? AND bca_b_id = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (initiative_id, bca_a_id, bca_b_id),
+        ).fetchone()
+    if not row:
+        return None
+    parsed = BCAComparisonResult.model_validate_json(row["summary_json"])
+    return parsed.model_copy(update={"comparison_id": parsed.comparison_id or row["id"]})
+
+
 def check_health(db_path: Path) -> int:
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM catalog_entries").fetchone()
