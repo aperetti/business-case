@@ -102,3 +102,46 @@ def test_report_helpers() -> None:
     assert fmt_axis(-250_000) == "-$250K"
     name = report_filename("Big Program / 2027", "Plan B", "report")
     assert name.startswith("big-program-2027-plan-b-report-") and name.endswith(".pdf")
+
+
+def test_excel_export_has_overview_and_one_sheet_per_line_item(seeded_client: TestClient) -> None:
+    import html
+    import io
+    import re
+    import zipfile
+
+    init_id, bca_a, bca_b = _demo(seeded_client)
+    seeded_client.post(f"/api/initiatives/{init_id}/simulate?bca_id={bca_a}", json={"n_simulations": 300})
+    res = seeded_client.get(f"/api/initiatives/{init_id}/export.xlsx")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert re.search(r'filename=".+-business-cases-\d{8}\.xlsx"', res.headers["content-disposition"])
+
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        workbook_xml = zf.read("xl/workbook.xml").decode()
+    sheet_names = [html.unescape(n) for n in re.findall(r'<sheet name="([^"]+)"', workbook_xml)]
+
+    a = seeded_client.get(f"/api/initiatives/{init_id}/bcas/{bca_a}").json()
+    b = seeded_client.get(f"/api/initiatives/{init_id}/bcas/{bca_b}").json()
+    assert sheet_names[0] == "Summary"
+    assert len(sheet_names) == 1 + (1 + len(a["items"])) + (1 + len(b["items"]))
+    assert all(len(n) <= 31 for n in sheet_names)
+    assert len({n.lower() for n in sheet_names}) == len(sheet_names)
+    cost_sheets = [n for n in sheet_names if re.match(r"^1\.\d+ Cost ", n)]
+    benefit_sheets = [n for n in sheet_names if re.match(r"^1\.\d+ Benefit ", n)]
+    assert len(cost_sheets) == sum(1 for i in a["items"] if i["kind"] == "cost")
+    assert len(benefit_sheets) == sum(1 for i in a["items"] if i["kind"] == "benefit")
+
+    assert seeded_client.get("/api/initiatives/missing/export.xlsx").status_code == 404
+
+
+def test_excel_sheet_names_are_safe_and_unique() -> None:
+    from app.core.excel_export import _SheetNames
+
+    names = _SheetNames()
+    first = names.make("1.1 Cost CI/CD [phase:1] * really long label that overflows")
+    assert len(first) <= 31 and not set("[]:*?/\\") & set(first)
+    assert names.make("Summary") == "Summary"
+    assert names.make("summary") == "summary (2)"

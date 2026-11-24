@@ -41,6 +41,16 @@ Two downloadable PDF reports are generated server-side with ReportLab:
 
 Deterministic figures always reflect current inputs. If inputs changed after the simulation being reported, the PDF shows a note saying so.
 
+## Excel Export
+
+The **Export to Excel** button on the Business Cases bar downloads one workbook containing every BCA under the initiative. API: `GET /api/initiatives/{id}/export.xlsx`.
+
+- **Summary** sheet: the initiative, plus a side-by-side table of every BCA. Each row links to that BCA's sheet.
+- **One overview sheet per BCA** (blue tab): assumptions, key metrics, the latest Monte Carlo results, cash flow by year, line items and value streams.
+- **One sheet per cost and benefit** (red and green tabs): details, parameters and their uncertainty, and a yearly valuation of ramp × base value × discount factor.
+
+Cash flows, present values and totals are live formulas. Changing a BCA's discount rate on its overview sheet, or a line item's base annual value, recalculates everything that depends on it. Base annual values come from each template's formula in the app. Discounted payback and Monte Carlo results are exported as values.
+
 ## Running the Application
 
 ### 1. Backend (FastAPI + SQLite)

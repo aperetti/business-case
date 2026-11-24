@@ -1198,6 +1198,7 @@ export default function App() {
                     onSelectBca={handleSelectBca}
                     onOpenCreateBca={handleOpenCreateBca}
                     onOpenCompare={() => setActiveTab('compare')}
+                    onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
                     onDownloadReport={() =>
                       activeBcaId ? api.downloadBcaReport(initiativeDetail.id, activeBcaId) : Promise.resolve()
                     }
@@ -1255,6 +1256,7 @@ export default function App() {
                     onSelectBca={handleSelectBca}
                     onOpenCreateBca={handleOpenCreateBca}
                     onOpenCompare={() => setActiveTab('compare')}
+                    onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
                     onDownloadReport={() =>
                       activeBcaId
                         ? api.downloadBcaReport(

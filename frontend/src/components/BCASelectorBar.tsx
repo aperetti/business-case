@@ -32,6 +32,8 @@ interface BarProps {
   onOpenCompare: () => void;
   /** Download the PDF report for the active BCA. */
   onDownloadReport?: () => Promise<void>;
+  /** Download every BCA of the initiative as an Excel workbook. */
+  onExportExcel?: () => Promise<void>;
 }
 
 export function BCASelectorBar({
@@ -41,8 +43,8 @@ export function BCASelectorBar({
   onOpenCreateBca,
   onOpenCompare,
   onDownloadReport,
+  onExportExcel,
 }: BarProps) {
-  const isMobile = useMediaQuery('(max-width: 48em)') ?? false;
 
   if (bcas.length === 0) return null;
 
@@ -59,7 +61,7 @@ export function BCASelectorBar({
             </Text>
           </Group>
 
-          <Group gap="xs" wrap="wrap" grow={isMobile} w={{ base: '100%', sm: 'auto' }}>
+          <Group gap="xs" wrap="wrap" w={{ base: '100%', sm: 'auto' }}>
             <Button
               type="button"
               size="xs"
@@ -82,6 +84,15 @@ export function BCASelectorBar({
             )}
             {activeBcaId && onDownloadReport && (
               <ReportDownloadButton size="xs" download={onDownloadReport} />
+            )}
+            {onExportExcel && (
+              <ReportDownloadButton
+                size="xs"
+                fileType="excel"
+                label="Export to Excel"
+                title="Download every business case as an Excel workbook"
+                download={onExportExcel}
+              />
             )}
             {bcas.length >= 2 && (
               <Button

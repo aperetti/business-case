@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
+from app.core.excel_export import build_initiative_workbook
 from app.core.reports import build_bca_report, build_comparison_report, report_filename
 from app.db import repository
 
@@ -26,6 +27,25 @@ def _pdf(content: bytes, filename: str) -> Response:
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/{initiative_id}/export.xlsx")
+def export_initiative_excel(request: Request, initiative_id: str) -> Response:
+    """Excel workbook with every BCA: an overview sheet per BCA and one sheet per line item."""
+    db_path = request.app.state.db_path
+    try:
+        initiative = repository.get_initiative_detail(db_path, initiative_id)
+        bcas = [repository.get_bca_detail(db_path, initiative_id, b.id) for b in initiative.bcas]
+    except repository.NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    catalog = {c.id: c for c in repository.list_catalog(db_path)}
+    content = build_initiative_workbook(initiative, bcas, catalog, generated_by=_actor(request))
+    filename = report_filename(initiative.name, "business-cases").removesuffix(".pdf") + ".xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
     )
 
 

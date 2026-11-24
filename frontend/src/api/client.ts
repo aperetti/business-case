@@ -168,7 +168,7 @@ async function request<T>(path: string, init?: RequestInit, hasRetried = false):
 
 /** Fetch a binary file (e.g. a PDF report) with auth and trigger a browser download. */
 async function downloadFile(path: string, fallbackName: string, hasRetried = false): Promise<void> {
-  const headers = await buildRequestHeaders(path, { Accept: 'application/pdf' }, hasRetried);
+  const headers = await buildRequestHeaders(path, { Accept: '*/*' }, hasRetried);
   headers.delete('Content-Type');
   const res = await fetch(`${API_BASE}${path}`, { headers });
   if (res.status === 401 && !hasRetried && authTokenProvider && shouldAttachAuthHeader(path)) {
@@ -198,6 +198,10 @@ async function downloadFile(path: string, fallbackName: string, hasRetried = fal
 }
 
 export const api = {
+  /** Excel workbook with every BCA: an overview sheet per BCA and one sheet per cost/benefit. */
+  downloadInitiativeExcel: (initiativeId: string) =>
+    downloadFile(`/api/initiatives/${encodeURIComponent(initiativeId)}/export.xlsx`, 'business-cases.xlsx'),
+
   downloadBcaReport: (initiativeId: string, bcaId: string, runId?: string | null) => {
     const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
     return downloadFile(
