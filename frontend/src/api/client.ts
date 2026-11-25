@@ -1,4 +1,9 @@
 import type {
+  MeasureCreate,
+  MeasureOut,
+  MeasureUpdate,
+  MeasureValueIn,
+  MeasureValueOut,
   CatalogDocContent,
   CatalogEntryUpdate,
   ApiKeyCreatedOut,
@@ -306,6 +311,36 @@ export const api = {
   deleteBCA: (initiativeId: string, bcaId: string) =>
     request<void>(
       `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/${encodeURIComponent(bcaId)}`,
+      { method: 'DELETE' }
+    ),
+
+  createMeasure: (initiativeId: string, payload: MeasureCreate) =>
+    request<MeasureOut>(`/api/initiatives/${encodeURIComponent(initiativeId)}/measures`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateMeasure: (initiativeId: string, measureId: string, payload: MeasureUpdate) =>
+    request<MeasureOut>(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/measures/${encodeURIComponent(measureId)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) }
+    ),
+
+  deleteMeasure: (initiativeId: string, measureId: string) =>
+    request<void>(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/measures/${encodeURIComponent(measureId)}`,
+      { method: 'DELETE' }
+    ),
+
+  setMeasureValue: (initiativeId: string, bcaId: string, measureId: string, payload: MeasureValueIn) =>
+    request<MeasureValueOut>(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/${encodeURIComponent(bcaId)}/measures/${encodeURIComponent(measureId)}`,
+      { method: 'PUT', body: JSON.stringify(payload) }
+    ),
+
+  clearMeasureValue: (initiativeId: string, bcaId: string, measureId: string) =>
+    request<void>(
+      `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/${encodeURIComponent(bcaId)}/measures/${encodeURIComponent(measureId)}`,
       { method: 'DELETE' }
     ),
 

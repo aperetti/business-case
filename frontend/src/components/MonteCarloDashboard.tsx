@@ -521,7 +521,7 @@ export function MonteCarloDashboard({
                       }}
                       formatter={(value: unknown) => [Number(value).toLocaleString(), 'Simulations']}
                     />
-                    <Bar dataKey="count" name="Simulations" radius={[2, 2, 0, 0]}>
+                    <Bar isAnimationActive={false} dataKey="count" name="Simulations" radius={[2, 2, 0, 0]}>
                       {histData.map((entry, idx) => (
                         <Cell
                           key={idx}
@@ -559,7 +559,7 @@ export function MonteCarloDashboard({
                       labelFormatter={(v) => `NPV ≤ ${formatCurrency(Number(v))}`}
                       formatter={(v: unknown) => [`${Number(v).toFixed(1)}%`, 'Cumulative Prob']}
                     />
-                    <Area
+                    <Area isAnimationActive={false}
                       type="monotone"
                       dataKey="cdfPct"
                       stroke="var(--chart-line)"
@@ -635,7 +635,7 @@ export function MonteCarloDashboard({
                     />
                     <Legend wrapperStyle={{ paddingTop: 6 }} />
                     <ReferenceLine y={0} stroke="var(--chart-zero)" strokeDasharray="3 3" />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="p90"
                       name="P90 Optimistic"
@@ -644,7 +644,7 @@ export function MonteCarloDashboard({
                       strokeWidth={1.8}
                       dot={false}
                     />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="p50"
                       name="P50 Median"
@@ -652,7 +652,7 @@ export function MonteCarloDashboard({
                       strokeWidth={2.2}
                       dot={{ r: 2.5 }}
                     />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="p10"
                       name="P10 Conservative"
@@ -777,9 +777,9 @@ export function MonteCarloDashboard({
                     />
                     <Legend wrapperStyle={{ paddingTop: 4 }} />
                     <ReferenceLine y={0} stroke="var(--chart-zero)" />
-                    <Bar dataKey="pv_costs" name="PV Costs" fill="var(--chart-neg)" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="pv_benefits" name="PV Benefits" fill="var(--chart-pos)" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="sim_npv_p50" name="Sim. P50 NPV" fill="var(--chart-line)" radius={[3, 3, 0, 0]} />
+                    <Bar isAnimationActive={false} dataKey="pv_costs" name="PV Costs" fill="var(--chart-neg)" radius={[3, 3, 0, 0]} />
+                    <Bar isAnimationActive={false} dataKey="pv_benefits" name="PV Benefits" fill="var(--chart-pos)" radius={[3, 3, 0, 0]} />
+                    <Bar isAnimationActive={false} dataKey="sim_npv_p50" name="Sim. P50 NPV" fill="var(--chart-line)" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

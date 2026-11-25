@@ -197,9 +197,9 @@ export function DeterministicOverview({ metrics, costStartYear }: Props) {
               />
               <Legend wrapperStyle={{ paddingTop: 6 }} />
               <ReferenceLine y={0} stroke="var(--chart-zero)" strokeDasharray="3 3" />
-              <Bar dataKey="cost" name="Costs" fill="var(--chart-neg)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="benefit" name="Benefits" fill="var(--chart-pos)" radius={[3, 3, 0, 0]} />
-              <Line
+              <Bar isAnimationActive={false} dataKey="cost" name="Costs" fill="var(--chart-neg)" radius={[3, 3, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="benefit" name="Benefits" fill="var(--chart-pos)" radius={[3, 3, 0, 0]} />
+              <Line isAnimationActive={false}
                 type="monotone"
                 dataKey="cumulativeNet"
                 name="Cumulative Net"

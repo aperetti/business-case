@@ -45,11 +45,28 @@ Deterministic figures always reflect current inputs. If inputs changed after the
 
 The **Export to Excel** button on the Business Cases bar downloads one workbook containing every BCA under the initiative. API: `GET /api/initiatives/{id}/export.xlsx`.
 
-- **Summary** sheet: the initiative, plus a side-by-side table of every BCA. Each row links to that BCA's sheet.
+- **Summary** sheet: the initiative, plus a side-by-side table of every BCA. Each row links to that BCA's sheet. Non-monetary measures are listed with each BCA's expected value; the range and basis are in cell comments.
 - **One overview sheet per BCA** (blue tab): assumptions, key metrics, the latest Monte Carlo results, cash flow by year, line items and value streams.
 - **One sheet per cost and benefit** (red and green tabs): details, parameters and their uncertainty, and a yearly valuation of ramp × base value × discount factor.
 
 Cash flows, present values and totals are live formulas. Changing a BCA's discount rate on its overview sheet, or a line item's base annual value, recalculates everything that depends on it. Base annual values come from each template's formula in the app. Discounted payback and Monte Carlo results are exported as values.
+
+## Non-Monetary Benefits
+
+Not every benefit has a price. Under **Initiatives & Assumptions → Non-Monetary Benefits**, define measures such as customer satisfaction, mean time to restore or delivery risk. Each has a unit and a direction (higher or lower is better).
+
+- Measures belong to the initiative, so every BCA is scored on the same list. Each BCA gets an expected value, plus an optional low–high range and a note on where the estimate came from.
+- Duplicating a BCA copies its estimates. Measures are locked along with the rest of the initiative while it is in review or approved.
+- API: `GET/POST /api/initiatives/{id}/measures`, `PATCH/DELETE /api/initiatives/{id}/measures/{measure_id}`, and `PUT/DELETE /api/initiatives/{id}/bcas/{bca_id}/measures/{measure_id}` for a BCA's estimate.
+
+### Pair-wise plot
+
+The **Compare BCAs** tab has a **Pair-wise Measures** plot, a scatter-plot matrix with each business case as a category (colour and marker shape).
+
+- Each lower cell plots one measure against another. The diagonal shows a single measure across cases.
+- Pick which measures to include: NPV, BCR, PV benefits, PV costs, discounted payback, P(NPV > 0) once simulated, and any non-monetary measure.
+- Whiskers show the low–high ranges; for NPV that's the latest Monte Carlo P10–P90.
+- Click a case in the legend to hide it. Switch to **Table** for the same values as numbers.
 
 ## Running the Application
 

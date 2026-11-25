@@ -145,3 +145,18 @@ def test_excel_sheet_names_are_safe_and_unique() -> None:
     assert len(first) <= 31 and not set("[]:*?/\\") & set(first)
     assert names.make("Summary") == "Summary"
     assert names.make("summary") == "summary (2)"
+
+
+def test_excel_summary_lists_non_monetary_measures(seeded_client: TestClient) -> None:
+    import io
+    import zipfile
+
+    init_id, _, _ = _demo(seeded_client)
+    res = seeded_client.get(f"/api/initiatives/{init_id}/export.xlsx")
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+        strings = zf.read("xl/sharedStrings.xml").decode()
+        names = zf.namelist()
+    assert "Non-monetary benefits" in strings
+    assert "Mean time to restore" in strings
+    assert any(n.startswith("xl/comments") for n in names)

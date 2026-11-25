@@ -17,6 +17,11 @@ from app.models import (
     InitiativeItemUpdate,
     InitiativeSummary,
     InitiativeUpdate,
+    MeasureCreate,
+    MeasureOut,
+    MeasureUpdate,
+    MeasureValueIn,
+    MeasureValueOut,
 )
 
 router = APIRouter(prefix="/api", tags=["initiatives"])
@@ -153,4 +158,79 @@ def delete_initiative_item(request: Request, item_id: str) -> Response:
         repository.delete_item(request.app.state.db_path, item_id)
     except repository.NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Non-monetary measures: defined per initiative, estimated per BCA ---
+
+
+def _measure_errors(exc: Exception) -> HTTPException:
+    if isinstance(exc, repository.NotFoundError):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/initiatives/{initiative_id}/measures", response_model=list[MeasureOut])
+def list_initiative_measures(request: Request, initiative_id: str) -> list[MeasureOut]:
+    try:
+        return repository.list_measures(request.app.state.db_path, initiative_id)
+    except repository.NotFoundError as exc:
+        raise _measure_errors(exc) from exc
+
+
+@router.post(
+    "/initiatives/{initiative_id}/measures",
+    response_model=MeasureOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_initiative_measure(request: Request, initiative_id: str, payload: MeasureCreate) -> MeasureOut:
+    try:
+        return repository.create_measure(request.app.state.db_path, initiative_id, payload)
+    except (repository.NotFoundError, repository.ValidationError) as exc:
+        raise _measure_errors(exc) from exc
+
+
+@router.patch("/initiatives/{initiative_id}/measures/{measure_id}", response_model=MeasureOut)
+def update_initiative_measure(
+    request: Request, initiative_id: str, measure_id: str, payload: MeasureUpdate
+) -> MeasureOut:
+    try:
+        return repository.update_measure(request.app.state.db_path, initiative_id, measure_id, payload)
+    except (repository.NotFoundError, repository.ValidationError) as exc:
+        raise _measure_errors(exc) from exc
+
+
+@router.delete("/initiatives/{initiative_id}/measures/{measure_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_initiative_measure(request: Request, initiative_id: str, measure_id: str) -> Response:
+    try:
+        repository.delete_measure(request.app.state.db_path, initiative_id, measure_id)
+    except repository.NotFoundError as exc:
+        raise _measure_errors(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/initiatives/{initiative_id}/bcas/{bca_id}/measures/{measure_id}",
+    response_model=MeasureValueOut,
+)
+def set_bca_measure_value(
+    request: Request, initiative_id: str, bca_id: str, measure_id: str, payload: MeasureValueIn
+) -> MeasureValueOut:
+    try:
+        return repository.set_measure_value(
+            request.app.state.db_path, initiative_id, bca_id, measure_id, payload
+        )
+    except (repository.NotFoundError, repository.ValidationError) as exc:
+        raise _measure_errors(exc) from exc
+
+
+@router.delete(
+    "/initiatives/{initiative_id}/bcas/{bca_id}/measures/{measure_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def clear_bca_measure_value(request: Request, initiative_id: str, bca_id: str, measure_id: str) -> Response:
+    try:
+        repository.clear_measure_value(request.app.state.db_path, initiative_id, bca_id, measure_id)
+    except repository.NotFoundError as exc:
+        raise _measure_errors(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -82,6 +82,31 @@ CREATE TABLE IF NOT EXISTS initiative_items (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS initiative_measures (
+    id TEXT PRIMARY KEY,
+    initiative_id TEXT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT '',
+    direction TEXT NOT NULL DEFAULT 'higher_is_better',
+    description TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_measures_initiative ON initiative_measures(initiative_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS bca_measure_values (
+    bca_id TEXT NOT NULL REFERENCES initiative_bcas(id) ON DELETE CASCADE,
+    measure_id TEXT NOT NULL REFERENCES initiative_measures(id) ON DELETE CASCADE,
+    value REAL NOT NULL,
+    low REAL,
+    high REAL,
+    note TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (bca_id, measure_id)
+);
+CREATE INDEX IF NOT EXISTS idx_measure_values_measure ON bca_measure_values(measure_id);
+
 CREATE TABLE IF NOT EXISTS simulation_runs (
     id TEXT PRIMARY KEY,
     initiative_id TEXT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
@@ -444,9 +469,39 @@ DEMO_INITIATIVES: list[dict] = [
                 "anti_double_count_tag": None,
             },
         ],
+        "measures": [
+            {
+                "name": "Customer satisfaction (CSAT)",
+                "unit": "pts",
+                "direction": "higher_is_better",
+                "description": "Quarterly CSAT for internal platform users, 0-100.",
+            },
+            {
+                "name": "Mean time to restore",
+                "unit": "hours",
+                "direction": "lower_is_better",
+                "description": "Average time to restore service after a P1/P2 incident.",
+            },
+            {
+                "name": "Delivery risk",
+                "unit": "score 1-5",
+                "direction": "lower_is_better",
+                "description": "Delivery team's assessed execution risk (1 = low, 5 = high).",
+            },
+        ],
+        "baseline_measure_values": {
+            "Customer satisfaction (CSAT)": {"value": 74, "low": 70, "high": 78},
+            "Mean time to restore": {"value": 3.5, "low": 2.5, "high": 5.0},
+            "Delivery risk": {"value": 2, "low": 1.5, "high": 3},
+        },
         "extra_bcas": [
             {
                 "name": "Accelerated Cloud-Native BCA",
+                "measure_values": {
+                    "Customer satisfaction (CSAT)": {"value": 81, "low": 75, "high": 86},
+                    "Mean time to restore": {"value": 1.5, "low": 1.0, "high": 2.5},
+                    "Delivery risk": {"value": 3.5, "low": 2.5, "high": 4.5},
+                },
                 "description": (
                     "Higher Year-1 investment in managed PaaS and team enablement to compress "
                     "time-to-adoption and lower recurring SRE run overhead."
@@ -907,6 +962,8 @@ def _insert_bca_bundle(
     sort_order: int,
     items: list[dict],
     now_iso: str,
+    measure_ids: dict[str, str] | None = None,
+    measure_values: dict[str, dict] | None = None,
 ) -> str:
     bca_id = str(uuid4())
     conn.execute(
@@ -960,6 +1017,14 @@ def _insert_bca_bundle(
                 now_iso,
             ),
         )
+    for name, est in (measure_values or {}).items():
+        conn.execute(
+            """
+            INSERT INTO bca_measure_values (bca_id, measure_id, value, low, high, note, updated_at)
+            VALUES (?, ?, ?, ?, ?, '', ?)
+            """,
+            (bca_id, (measure_ids or {})[name], est["value"], est.get("low"), est.get("high"), now_iso),
+        )
     return bca_id
 
 
@@ -987,6 +1052,18 @@ def _insert_initiative_bundle(conn: sqlite3.Connection, spec: dict, now_iso: str
         ),
     )
 
+    measure_ids: dict[str, str] = {}
+    for order, m in enumerate(spec.get("measures", [])):
+        measure_ids[m["name"]] = str(uuid4())
+        conn.execute(
+            """
+            INSERT INTO initiative_measures (
+                id, initiative_id, name, unit, direction, description, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (measure_ids[m["name"]], init_id, m["name"], m["unit"], m["direction"], m["description"], order, now_iso, now_iso),
+        )
+
     _insert_bca_bundle(
         conn,
         init_id,
@@ -999,6 +1076,8 @@ def _insert_initiative_bundle(conn: sqlite3.Connection, spec: dict, now_iso: str
         sort_order=0,
         items=spec["items"],
         now_iso=now_iso,
+        measure_ids=measure_ids,
+        measure_values=spec.get("baseline_measure_values"),
     )
 
     for idx, extra in enumerate(spec.get("extra_bcas", []), start=1):
@@ -1014,6 +1093,8 @@ def _insert_initiative_bundle(conn: sqlite3.Connection, spec: dict, now_iso: str
             sort_order=idx,
             items=extra["items"],
             now_iso=now_iso,
+            measure_ids=measure_ids,
+            measure_values=extra.get("measure_values"),
         )
     return init_id
 

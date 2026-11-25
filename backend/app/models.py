@@ -439,6 +439,74 @@ class DeterministicMetrics(BaseModel):
     guardrail_warnings: list[GuardrailWarning] = Field(default_factory=list)
 
 
+MeasureDirection = Literal["higher_is_better", "lower_is_better"]
+
+
+class MeasureCreate(BaseModel):
+    """A non-monetary measure defined on an initiative and scored per BCA (e.g. CSAT, MTTR)."""
+
+    name: str = Field(..., min_length=1, max_length=120)
+    unit: str = Field(default="", max_length=40)
+    direction: MeasureDirection = "higher_is_better"
+    description: str = Field(default="", max_length=1000)
+
+
+class MeasureUpdate(BaseModel):
+    """Partial update for a non-monetary measure definition."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    unit: str | None = Field(default=None, max_length=40)
+    direction: MeasureDirection | None = None
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class MeasureOut(BaseModel):
+    """Non-monetary measure definition shared by every BCA of an initiative."""
+
+    id: str
+    initiative_id: str
+    name: str
+    unit: str
+    direction: MeasureDirection
+    description: str
+    sort_order: int = 0
+    created_at: str
+    updated_at: str
+
+
+class MeasureValueIn(BaseModel):
+    """A BCA's estimate for one measure: expected value with an optional low-high range."""
+
+    value: float
+    low: float | None = None
+    high: float | None = None
+    note: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "MeasureValueIn":
+        _check_finite(self.value, "value")
+        if self.low is not None:
+            _check_finite(self.low, "low")
+            if self.low > self.value:
+                raise ValueError("low cannot be greater than the expected value.")
+        if self.high is not None:
+            _check_finite(self.high, "high")
+            if self.high < self.value:
+                raise ValueError("high cannot be less than the expected value.")
+        return self
+
+
+class MeasureValueOut(BaseModel):
+    """Stored estimate for one measure on one BCA."""
+
+    measure_id: str
+    value: float
+    low: float | None = None
+    high: float | None = None
+    note: str = ""
+    updated_at: str
+
+
 class BCACreate(BaseModel):
     """Payload to create or clone a Business Case Analysis (BCA) under an initiative."""
 
@@ -498,6 +566,9 @@ class BCASummary(BaseModel):
     latest_npv_p50: float | None = None
     latest_npv_p90: float | None = None
     latest_bcr_p50: float | None = None
+    measure_values: dict[str, MeasureValueOut] = Field(
+        default_factory=dict, description="Non-monetary measure estimates keyed by measure id."
+    )
     created_at: str
     updated_at: str
 
@@ -562,6 +633,7 @@ class InitiativeDetail(BaseModel):
     active_bca_id: str | None = None
     active_bca: BCASummary | None = None
     bcas: list[BCASummary] = Field(default_factory=list)
+    measures: list[MeasureOut] = Field(default_factory=list)
     items: list[InitiativeItemOut]
     deterministic: DeterministicMetrics
 

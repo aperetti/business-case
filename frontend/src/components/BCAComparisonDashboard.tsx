@@ -1187,7 +1187,7 @@ export function BCAComparisonDashboard({
                       }}
                       formatter={(v: unknown, name: string) => [`${Number(v).toFixed(2)}%`, name]}
                     />
-                    <Area
+                    <Area isAnimationActive={false}
                       type="monotone"
                       dataKey="pctA"
                       name={nameA}
@@ -1195,7 +1195,7 @@ export function BCAComparisonDashboard({
                       fill="var(--compare-a-fill)"
                       strokeWidth={2}
                     />
-                    <Area
+                    <Area isAnimationActive={false}
                       type="monotone"
                       dataKey="pctB"
                       name={nameB}
@@ -1235,7 +1235,7 @@ export function BCAComparisonDashboard({
                       labelFormatter={(v) => `NPV ≤ ${formatCurrency(Number(v))}`}
                       formatter={(v: unknown, name: string) => [`${Number(v).toFixed(1)}%`, name]}
                     />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="cdfPctA"
                       name={`${nameA} CDF`}
@@ -1243,7 +1243,7 @@ export function BCAComparisonDashboard({
                       strokeWidth={2.2}
                       dot={false}
                     />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="cdfPctB"
                       name={`${nameB} CDF`}
@@ -1280,7 +1280,7 @@ export function BCAComparisonDashboard({
                       }}
                       formatter={(v: unknown) => [Number(v).toLocaleString(), 'Paired Draws']}
                     />
-                    <Bar dataKey="count" name="Draws" radius={[2, 2, 0, 0]}>
+                    <Bar isAnimationActive={false} dataKey="count" name="Draws" radius={[2, 2, 0, 0]}>
                       {(paired?.delta_npv_histogram || []).map((entry, idx) => (
                         <Cell
                           key={idx}
@@ -1419,13 +1419,13 @@ export function BCAComparisonDashboard({
                     <ReferenceLine y={0} stroke="var(--chart-zero)" strokeDasharray="3 3" />
                     {showEnvelopes && (
                       <>
-                        <Line type="monotone" dataKey="a_p90" name={`${nameA} P90`} stroke="var(--compare-a)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
-                        <Line type="monotone" dataKey="a_p10" name={`${nameA} P10`} stroke="var(--compare-a)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
-                        <Line type="monotone" dataKey="b_p90" name={`${nameB} P90`} stroke="var(--compare-b)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
-                        <Line type="monotone" dataKey="b_p10" name={`${nameB} P10`} stroke="var(--compare-b)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
+                        <Line isAnimationActive={false} type="monotone" dataKey="a_p90" name={`${nameA} P90`} stroke="var(--compare-a)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
+                        <Line isAnimationActive={false} type="monotone" dataKey="a_p10" name={`${nameA} P10`} stroke="var(--compare-a)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
+                        <Line isAnimationActive={false} type="monotone" dataKey="b_p90" name={`${nameB} P90`} stroke="var(--compare-b)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
+                        <Line isAnimationActive={false} type="monotone" dataKey="b_p10" name={`${nameB} P10`} stroke="var(--compare-b)" strokeDasharray="3 3" strokeWidth={1.3} dot={false} strokeOpacity={0.65} connectNulls={false} />
                       </>
                     )}
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="a_p50"
                       name={`${nameA} P50`}
@@ -1434,7 +1434,7 @@ export function BCAComparisonDashboard({
                       dot={{ r: 2.5 }}
                       connectNulls={false}
                     />
-                    <Line
+                    <Line isAnimationActive={false}
                       type="monotone"
                       dataKey="b_p50"
                       name={`${nameB} P50`}
@@ -1484,8 +1484,8 @@ export function BCAComparisonDashboard({
                     />
                     <Legend wrapperStyle={{ paddingTop: 4 }} />
                     <ReferenceLine y={0} stroke="var(--chart-zero)" />
-                    <Bar dataKey="valA" name={nameA} fill="var(--compare-a)" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="valB" name={nameB} fill="var(--compare-b)" radius={[3, 3, 0, 0]} />
+                    <Bar isAnimationActive={false} dataKey="valA" name={nameA} fill="var(--compare-a)" radius={[3, 3, 0, 0]} />
+                    <Bar isAnimationActive={false} dataKey="valB" name={nameB} fill="var(--compare-b)" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

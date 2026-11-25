@@ -650,6 +650,41 @@ def build_initiative_workbook(
             ws.write(row, 9, "Not simulated", fmt.label)
         row += 1
 
+    if initiative.measures:
+        values_by_bca = {b.id: b.measure_values for b in initiative.bcas}
+        row = _section(ws, fmt, row + 1, "Non-monetary benefits", width)
+        for c, h in enumerate(["Measure", "Unit", "Better when"]):
+            ws.write(row, c, h, fmt.head)
+        for c, (bca, _) in enumerate(summary_rows, start=3):
+            ws.write(row, c, bca.name, fmt.head_r)
+        row += 1
+        for m in initiative.measures:
+            ws.write(row, 0, m.name, fmt.text)
+            ws.write(row, 1, m.unit or "-", fmt.text)
+            ws.write(row, 2, "Higher" if m.direction == "higher_is_better" else "Lower", fmt.text)
+            for c, (bca, _) in enumerate(summary_rows, start=3):
+                est = values_by_bca.get(bca.id, {}).get(m.id)
+                if est is None:
+                    ws.write(row, c, "Not scored", fmt.label)
+                    continue
+                ws.write_number(row, c, est.value, fmt.number)
+                detail = []
+                if est.low is not None or est.high is not None:
+                    low = est.low if est.low is not None else est.value
+                    high = est.high if est.high is not None else est.value
+                    detail.append(f"Range: {low:g} to {high:g}")
+                if est.note:
+                    detail.append(est.note)
+                if detail:
+                    ws.write_comment(row, c, "\n".join(detail), {"x_scale": 1.6})
+            row += 1
+        ws.merge_range(
+            row, 0, row, width - 1,
+            "Expected values; hover a cell with a red corner for its low-high range and basis.",
+            fmt.note,
+        )
+        row += 1
+
     row = _section(ws, fmt, row + 1, "How this workbook works", width)
     notes = [
         "Each business case has an overview sheet (blue tab) followed by one sheet per line item: red tabs are costs, green tabs are benefits.",

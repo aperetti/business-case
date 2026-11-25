@@ -208,6 +208,46 @@ export interface BCAUpdate {
   is_baseline?: boolean;
 }
 
+export type MeasureDirection = 'higher_is_better' | 'lower_is_better';
+
+/** Non-monetary measure (e.g. CSAT, MTTR) defined on an initiative and estimated per BCA. */
+export interface MeasureOut {
+  id: string;
+  initiative_id: string;
+  name: string;
+  unit: string;
+  direction: MeasureDirection;
+  description: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeasureCreate {
+  name: string;
+  unit?: string;
+  direction?: MeasureDirection;
+  description?: string;
+}
+
+export type MeasureUpdate = Partial<MeasureCreate>;
+
+export interface MeasureValueIn {
+  value: number;
+  low?: number | null;
+  high?: number | null;
+  note?: string;
+}
+
+export interface MeasureValueOut {
+  measure_id: string;
+  value: number;
+  low: number | null;
+  high: number | null;
+  note: string;
+  updated_at: string;
+}
+
 export interface BCASummary {
   id: string;
   initiative_id: string;
@@ -233,6 +273,8 @@ export interface BCASummary {
   latest_npv_p50: number | null;
   latest_npv_p90: number | null;
   latest_bcr_p50: number | null;
+  /** Non-monetary measure estimates keyed by measure id. */
+  measure_values: Record<string, MeasureValueOut>;
   created_at: string;
   updated_at: string;
 }
@@ -291,6 +333,7 @@ export interface InitiativeDetail {
   active_bca_id: string | null;
   active_bca: BCASummary | null;
   bcas: BCASummary[];
+  measures: MeasureOut[];
   items: InitiativeItemOut[];
   deterministic: DeterministicMetrics;
 }

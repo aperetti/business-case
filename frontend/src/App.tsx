@@ -53,6 +53,7 @@ import { CatalogManager } from './components/CatalogManager';
 import { DeterministicOverview } from './components/DeterministicOverview';
 import { DocsAgentChat } from './components/DocsAgentChat';
 import { DocsSite } from './components/DocsSite';
+import { KeepAlivePanel } from './components/KeepAlivePanel';
 import { InitiativeSettingsBar } from './components/InitiativeSettingsBar';
 import { InitiativeApprovalPanel } from './components/InitiativeApprovalPanel';
 import { InitiativeSidebar } from './components/InitiativeSidebar';
@@ -60,6 +61,8 @@ import { LineItemDrawer } from './components/LineItemDrawer';
 import { LineItemsTable } from './components/LineItemsTable';
 import { LoginGate } from './components/LoginGate';
 import { MonteCarloDashboard } from './components/MonteCarloDashboard';
+import { NonMonetaryBenefitsPanel } from './components/NonMonetaryBenefitsPanel';
+import { PairwisePlot } from './components/PairwisePlot';
 import type {
   AdminSection,
   AuthUserOut,
@@ -537,7 +540,6 @@ export default function App() {
 
   const handleSelectBca = async (bcaId: string) => {
     if (!initiativeDetail || bcaId === activeBcaId) return;
-    setSimResult(null);
     try {
       await refreshInitiativeData(initiativeDetail.id, bcaId);
     } catch (err) {
@@ -727,6 +729,11 @@ export default function App() {
     ]);
     setInitiativeDetail(detail);
     setInitiatives(list);
+  };
+
+  const handleMeasuresChanged = async () => {
+    if (!initiativeDetail) return;
+    setInitiativeDetail(await api.getInitiative(initiativeDetail.id, activeBcaId));
   };
 
   const handleDeleteItem = async (item: InitiativeItemOut) => {
@@ -1167,168 +1174,188 @@ export default function App() {
             </Tabs.List>
 
             <Tabs.Panel value="assumptions">
-              {!initiativeDetail ? (
-                <Paper withBorder p="md" bg="var(--bg-surface)">
-                  <Text size="sm" c="var(--text-muted)">
-                    Create a new initiative from the sidebar to begin modeling costs, benefits, and uncertainty.
-                  </Text>
-                </Paper>
-              ) : (
-                <Stack gap="md">
-                  <InitiativeApprovalPanel
-                    key={initiativeDetail.id}
-                    initiativeId={initiativeDetail.id}
-                    onStatusChange={async () => {
-                      const id = initiativeDetail.id;
-                      try {
-                        const [list] = await Promise.all([
-                          api.listInitiatives(),
-                          refreshInitiativeData(id, activeBcaId),
-                          refreshPendingApprovals(),
-                        ]);
-                        setInitiatives(list);
-                      } catch {
-                        /* panel already reported the action result */
+              <KeepAlivePanel active={activeTab === 'assumptions'}>
+                {!initiativeDetail ? (
+                  <Paper withBorder p="md" bg="var(--bg-surface)">
+                    <Text size="sm" c="var(--text-muted)">
+                      Create a new initiative from the sidebar to begin modeling costs, benefits, and uncertainty.
+                    </Text>
+                  </Paper>
+                ) : (
+                  <Stack gap="md">
+                    <InitiativeApprovalPanel
+                      key={initiativeDetail.id}
+                      initiativeId={initiativeDetail.id}
+                      onStatusChange={async () => {
+                        const id = initiativeDetail.id;
+                        try {
+                          const [list] = await Promise.all([
+                            api.listInitiatives(),
+                            refreshInitiativeData(id, activeBcaId),
+                            refreshPendingApprovals(),
+                          ]);
+                          setInitiatives(list);
+                        } catch {
+                          /* panel already reported the action result */
+                        }
+                      }}
+                    />
+                    <BCASelectorBar
+                      bcas={bcas}
+                      activeBcaId={activeBcaId}
+                      onSelectBca={handleSelectBca}
+                      onOpenCreateBca={handleOpenCreateBca}
+                      onOpenCompare={() => setActiveTab('compare')}
+                      onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
+                      onDownloadReport={() =>
+                        activeBcaId ? api.downloadBcaReport(initiativeDetail.id, activeBcaId) : Promise.resolve()
                       }
-                    }}
-                  />
-                  <BCASelectorBar
-                    bcas={bcas}
-                    activeBcaId={activeBcaId}
-                    onSelectBca={handleSelectBca}
-                    onOpenCreateBca={handleOpenCreateBca}
-                    onOpenCompare={() => setActiveTab('compare')}
-                    onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
-                    onDownloadReport={() =>
-                      activeBcaId ? api.downloadBcaReport(initiativeDetail.id, activeBcaId) : Promise.resolve()
-                    }
-                  />
-                  <InitiativeSettingsBar
-                    initiative={initiativeDetail}
-                    activeBca={activeBca}
-                    bcaCount={bcas.length}
-                    onUpdate={handleUpdateInitiative}
-                    onDelete={handleDeleteInitiative}
-                    onUpdateBca={handleUpdateBca}
-                    onDeleteBca={handleDeleteBca}
-                    onSetBaseline={handleSetBaselineBca}
-                  />
-                  <DeterministicOverview
-                    metrics={initiativeDetail.deterministic}
-                    costStartYear={initiativeDetail.cost_start_year}
-                  />
-                  <LineItemsTable
-                    items={initiativeDetail.items}
-                    costStartYear={initiativeDetail.cost_start_year}
-                    onAdd={() => {
-                      setEditingItem(null);
-                      setDraftItem(null);
-                      openDrawer();
-                    }}
-                    onAddForCatalog={(catalogId) => {
-                      setEditingItem(null);
-                      setDraftItem({ catalog_id: catalogId });
-                      openDrawer();
-                    }}
-                    onEdit={(item) => {
-                      setDraftItem(null);
-                      setEditingItem(item);
-                      openDrawer();
-                    }}
-                    onDelete={handleDeleteItem}
-                  />
-                </Stack>
-              )}
+                    />
+                    <InitiativeSettingsBar
+                      initiative={initiativeDetail}
+                      activeBca={activeBca}
+                      bcaCount={bcas.length}
+                      onUpdate={handleUpdateInitiative}
+                      onDelete={handleDeleteInitiative}
+                      onUpdateBca={handleUpdateBca}
+                      onDeleteBca={handleDeleteBca}
+                      onSetBaseline={handleSetBaselineBca}
+                    />
+                    <DeterministicOverview
+                      metrics={initiativeDetail.deterministic}
+                      costStartYear={initiativeDetail.cost_start_year}
+                    />
+                    <LineItemsTable
+                      items={initiativeDetail.items}
+                      costStartYear={initiativeDetail.cost_start_year}
+                      onAdd={() => {
+                        setEditingItem(null);
+                        setDraftItem(null);
+                        openDrawer();
+                      }}
+                      onAddForCatalog={(catalogId) => {
+                        setEditingItem(null);
+                        setDraftItem({ catalog_id: catalogId });
+                        openDrawer();
+                      }}
+                      onEdit={(item) => {
+                        setDraftItem(null);
+                        setEditingItem(item);
+                        openDrawer();
+                      }}
+                      onDelete={handleDeleteItem}
+                    />
+                    <NonMonetaryBenefitsPanel
+                      initiativeId={initiativeDetail.id}
+                      measures={initiativeDetail.measures}
+                      activeBca={activeBca}
+                      bcas={bcas}
+                      onChanged={handleMeasuresChanged}
+                    />
+                  </Stack>
+                )}
+              </KeepAlivePanel>
             </Tabs.Panel>
 
             <Tabs.Panel value="montecarlo">
-              {!initiativeDetail ? (
-                <Paper withBorder p="md" bg="var(--bg-surface)">
-                  <Text size="sm" c="var(--text-muted)">
-                    Select or create an initiative first.
-                  </Text>
-                </Paper>
-              ) : (
-                <Stack gap="md">
-                  <BCASelectorBar
-                    bcas={bcas}
-                    activeBcaId={activeBcaId}
-                    onSelectBca={handleSelectBca}
-                    onOpenCreateBca={handleOpenCreateBca}
-                    onOpenCompare={() => setActiveTab('compare')}
-                    onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
-                    onDownloadReport={() =>
-                      activeBcaId
-                        ? api.downloadBcaReport(
-                            initiativeDetail.id,
-                            activeBcaId,
-                            // Report on the run being viewed, if it belongs to this BCA.
-                            simResult && simResult.bca_id === activeBcaId ? simResult.run_id : null
-                          )
-                        : Promise.resolve()
-                    }
-                  />
-                  <MonteCarloDashboard
-                    initiative={initiativeDetail}
-                    activeBca={activeBca}
-                    bcaCount={bcas.length}
-                    activeResult={simResult}
-                    runs={activeBcaRuns}
-                    running={simRunning}
-                    onRunSimulation={handleRunSimulation}
-                    onSelectHistoricalRun={(rec) => setSimResult(rec.summary)}
-                    onOpenCompare={() => setActiveTab('compare')}
-                  />
-                </Stack>
-              )}
+              <KeepAlivePanel active={activeTab === 'montecarlo'}>
+                {!initiativeDetail ? (
+                  <Paper withBorder p="md" bg="var(--bg-surface)">
+                    <Text size="sm" c="var(--text-muted)">
+                      Select or create an initiative first.
+                    </Text>
+                  </Paper>
+                ) : (
+                  <Stack gap="md">
+                    <BCASelectorBar
+                      bcas={bcas}
+                      activeBcaId={activeBcaId}
+                      onSelectBca={handleSelectBca}
+                      onOpenCreateBca={handleOpenCreateBca}
+                      onOpenCompare={() => setActiveTab('compare')}
+                      onExportExcel={() => api.downloadInitiativeExcel(initiativeDetail.id)}
+                      onDownloadReport={() =>
+                        activeBcaId
+                          ? api.downloadBcaReport(
+                              initiativeDetail.id,
+                              activeBcaId,
+                              // Report on the run being viewed, if it belongs to this BCA.
+                              simResult && simResult.bca_id === activeBcaId ? simResult.run_id : null
+                            )
+                          : Promise.resolve()
+                      }
+                    />
+                    <MonteCarloDashboard
+                      initiative={initiativeDetail}
+                      activeBca={activeBca}
+                      bcaCount={bcas.length}
+                      activeResult={simResult}
+                      runs={activeBcaRuns}
+                      running={simRunning}
+                      onRunSimulation={handleRunSimulation}
+                      onSelectHistoricalRun={(rec) => setSimResult(rec.summary)}
+                      onOpenCompare={() => setActiveTab('compare')}
+                    />
+                  </Stack>
+                )}
+              </KeepAlivePanel>
             </Tabs.Panel>
 
             <Tabs.Panel value="compare">
-              {!initiativeDetail ? (
-                <Paper withBorder p="md" bg="var(--bg-surface)">
-                  <Text size="sm" c="var(--text-muted)">
-                    Select or create an initiative first.
-                  </Text>
-                </Paper>
-              ) : (
-                <BCAComparisonDashboard
-                  initiative={initiativeDetail}
-                  bcas={bcas}
-                  runs={runs}
-                  comparisons={comparisons}
-                  activeComparison={activeComparison}
-                  running={compareRunning}
-                  onRunComparison={handleRunComparison}
-                  onSelectComparison={(rec) => setActiveComparison(rec.summary)}
-                  onOpenCreateBca={handleOpenCreateBca}
-                />
-              )}
+              <KeepAlivePanel active={activeTab === 'compare'}>
+                {!initiativeDetail ? (
+                  <Paper withBorder p="md" bg="var(--bg-surface)">
+                    <Text size="sm" c="var(--text-muted)">
+                      Select or create an initiative first.
+                    </Text>
+                  </Paper>
+                ) : (
+                  <Stack gap="md">
+                    <BCAComparisonDashboard
+                      initiative={initiativeDetail}
+                      bcas={bcas}
+                      runs={runs}
+                      comparisons={comparisons}
+                      activeComparison={activeComparison}
+                      running={compareRunning}
+                      onRunComparison={handleRunComparison}
+                      onSelectComparison={(rec) => setActiveComparison(rec.summary)}
+                      onOpenCreateBca={handleOpenCreateBca}
+                    />
+                    <PairwisePlot bcas={bcas} measures={initiativeDetail.measures} />
+                  </Stack>
+                )}
+              </KeepAlivePanel>
             </Tabs.Panel>
 
             <Tabs.Panel value="catalog">
-              <CatalogManager
-                catalog={catalog}
-                onCreateEntry={handleCreateCatalogEntry}
-                onUpdateEntry={handleUpdateCatalogEntry}
-                canManage={canManageCatalog}
-                onOpenDoc={handleOpenDoc}
-              />
+              <KeepAlivePanel active={activeTab === 'catalog'}>
+                <CatalogManager
+                  catalog={catalog}
+                  onCreateEntry={handleCreateCatalogEntry}
+                  onUpdateEntry={handleUpdateCatalogEntry}
+                  canManage={canManageCatalog}
+                  onOpenDoc={handleOpenDoc}
+                />
+              </KeepAlivePanel>
             </Tabs.Panel>
 
             <Tabs.Panel value="docs">
-              <DocsSite
-                catalog={catalog}
-                activeSlug={activeDocSlug}
-                onSelectSlug={handleOpenDoc}
-                hasActiveInitiative={Boolean(initiativeDetail)}
-                onUseTemplate={handleUseTemplateFromDoc}
-                llmSettings={llmSettings}
-                activeInitiative={initiativeDetail}
-                onOpenAdmin={() => handleOpenAdmin('ai')}
-                onOpenChatDrawer={docsAgentAvailable ? openChatDrawer : undefined}
-                canManageCatalog={canManageCatalog}
-                onCatalogEntryChanged={handleCatalogEntryChanged}
-              />
+              <KeepAlivePanel active={activeTab === 'docs'}>
+                <DocsSite
+                  catalog={catalog}
+                  activeSlug={activeDocSlug}
+                  onSelectSlug={handleOpenDoc}
+                  hasActiveInitiative={Boolean(initiativeDetail)}
+                  onUseTemplate={handleUseTemplateFromDoc}
+                  llmSettings={llmSettings}
+                  activeInitiative={initiativeDetail}
+                  onOpenAdmin={() => handleOpenAdmin('ai')}
+                  onOpenChatDrawer={docsAgentAvailable ? openChatDrawer : undefined}
+                  canManageCatalog={canManageCatalog}
+                  onCatalogEntryChanged={handleCatalogEntryChanged}
+                />
+              </KeepAlivePanel>
             </Tabs.Panel>
           </Tabs>
         )}

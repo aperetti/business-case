@@ -52,6 +52,11 @@ from app.models import (
     InitiativeUpdate,
     LLMSettingsOut,
     LLMSettingsUpdate,
+    MeasureCreate,
+    MeasureOut,
+    MeasureUpdate,
+    MeasureValueIn,
+    MeasureValueOut,
     RoleCreate,
     RoleOut,
     RoleUpdate,
@@ -604,6 +609,7 @@ def _build_bca_summary(
     item_dicts: list[dict[str, Any]],
     catalog_map: dict[str, CatalogEntry],
     latest_run: SimulationResult | None = None,
+    measure_values: dict[str, MeasureValueOut] | None = None,
 ) -> BCASummary:
     det, _, _ = run_deterministic(bca_dict, item_dicts, catalog_map)
     mc = latest_run.monte_carlo if latest_run else None
@@ -632,6 +638,7 @@ def _build_bca_summary(
         latest_npv_p50=mc.npv_stats.p50 if mc else None,
         latest_npv_p90=mc.npv_stats.p90 if mc else None,
         latest_bcr_p50=(mc.bcr_stats.p50 if mc and mc.bcr_stats else None),
+        measure_values=measure_values or {},
         created_at=bca_dict["created_at"],
         updated_at=bca_dict["updated_at"],
     )
@@ -682,6 +689,8 @@ def _build_initiative_detail(
     items_by_bca: dict[str, list[dict[str, Any]]],
     latest_runs: dict[tuple[str, str | None], SimulationResult],
     catalog_map: dict[str, CatalogEntry],
+    measures: list[MeasureOut] | None = None,
+    measure_values: dict[str, dict[str, MeasureValueOut]] | None = None,
 ) -> InitiativeDetail:
     items_out, det_metrics = _build_items_out(active_bca, active_items, catalog_map)
     bca_summaries: list[BCASummary] = []
@@ -692,7 +701,9 @@ def _build_initiative_detail(
         latest_run = latest_runs.get((init_dict["id"], b_id))
         if latest_run is None and bca["is_baseline"]:
             latest_run = latest_runs.get((init_dict["id"], None))
-        summary = _build_bca_summary(bca, b_items, catalog_map, latest_run)
+        summary = _build_bca_summary(
+            bca, b_items, catalog_map, latest_run, (measure_values or {}).get(b_id)
+        )
         bca_summaries.append(summary)
         if b_id == active_bca["id"]:
             active_summary = summary
@@ -712,6 +723,7 @@ def _build_initiative_detail(
         active_bca_id=active_bca["id"],
         active_bca=active_summary,
         bcas=bca_summaries,
+        measures=measures or [],
         items=items_out,
         deterministic=det_metrics,
     )
@@ -811,6 +823,8 @@ def get_initiative_detail(
         ).fetchall()
         catalog_map = _load_catalog_map(conn)
         latest_runs = _load_latest_runs_by_bca(conn, initiative_id)
+        measures = _load_measures(conn, initiative_id)
+        measure_values = _load_measure_values(conn, initiative_id)
 
     baseline_id = all_bcas[0]["id"] if all_bcas else active_bca["id"]
     items_by_bca: dict[str, list[dict[str, Any]]] = {}
@@ -828,6 +842,8 @@ def get_initiative_detail(
         items_by_bca,
         latest_runs,
         catalog_map,
+        measures,
+        measure_values,
     )
 
 
@@ -1145,6 +1161,15 @@ def create_bca(db_path: Path, initiative_id: str, payload: BCACreate) -> BCADeta
                 ),
             )
 
+        if payload.clone_from_bca_id:
+            conn.execute(
+                """
+                INSERT INTO bca_measure_values (bca_id, measure_id, value, low, high, note, updated_at)
+                SELECT ?, measure_id, value, low, high, note, ? FROM bca_measure_values WHERE bca_id = ?
+                """,
+                (new_bca_id, now, source_bca["id"]),
+            )
+
         conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
 
     return get_bca_detail(db_path, initiative_id, new_bca_id)
@@ -1278,6 +1303,203 @@ def delete_bca(db_path: Path, initiative_id: str, bca_id: str) -> None:
                 )
         else:
             conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
+
+
+# --- Non-monetary measures ---
+
+
+def _row_to_measure(row: sqlite3.Row) -> MeasureOut:
+    return MeasureOut(
+        id=row["id"],
+        initiative_id=row["initiative_id"],
+        name=row["name"],
+        unit=row["unit"],
+        direction=row["direction"],
+        description=row["description"],
+        sort_order=int(row["sort_order"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _load_measures(conn: sqlite3.Connection, initiative_id: str) -> list[MeasureOut]:
+    rows = conn.execute(
+        "SELECT * FROM initiative_measures WHERE initiative_id = ? ORDER BY sort_order ASC, created_at ASC",
+        (initiative_id,),
+    ).fetchall()
+    return [_row_to_measure(r) for r in rows]
+
+
+def _load_measure_values(
+    conn: sqlite3.Connection, initiative_id: str
+) -> dict[str, dict[str, MeasureValueOut]]:
+    """Measure estimates for every BCA of an initiative, as {bca_id: {measure_id: value}}."""
+    rows = conn.execute(
+        """
+        SELECT v.* FROM bca_measure_values v
+        JOIN initiative_measures m ON m.id = v.measure_id
+        WHERE m.initiative_id = ?
+        """,
+        (initiative_id,),
+    ).fetchall()
+    out: dict[str, dict[str, MeasureValueOut]] = {}
+    for r in rows:
+        out.setdefault(r["bca_id"], {})[r["measure_id"]] = MeasureValueOut(
+            measure_id=r["measure_id"],
+            value=float(r["value"]),
+            low=None if r["low"] is None else float(r["low"]),
+            high=None if r["high"] is None else float(r["high"]),
+            note=r["note"],
+            updated_at=r["updated_at"],
+        )
+    return out
+
+
+def _editable_initiative(conn: sqlite3.Connection, initiative_id: str) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM initiatives WHERE id = ?", (initiative_id,)).fetchone()
+    if not row:
+        raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+    _assert_initiative_editable(row)
+    return row
+
+
+def _get_measure_row(conn: sqlite3.Connection, initiative_id: str, measure_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM initiative_measures WHERE id = ? AND initiative_id = ?",
+        (measure_id, initiative_id),
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(f"Measure '{measure_id}' not found on initiative '{initiative_id}'.")
+    return row
+
+
+def _assert_unique_measure_name(
+    conn: sqlite3.Connection, initiative_id: str, name: str, exclude_id: str | None = None
+) -> None:
+    row = conn.execute(
+        "SELECT id FROM initiative_measures WHERE initiative_id = ? AND lower(name) = lower(?) AND id != ?",
+        (initiative_id, name, exclude_id or ""),
+    ).fetchone()
+    if row is not None:
+        raise ValidationError(f"A measure named '{name}' already exists on this initiative.")
+
+
+def list_measures(db_path: Path, initiative_id: str) -> list[MeasureOut]:
+    with get_connection(db_path) as conn:
+        if not conn.execute("SELECT 1 FROM initiatives WHERE id = ?", (initiative_id,)).fetchone():
+            raise NotFoundError(f"Initiative '{initiative_id}' not found.")
+        return _load_measures(conn, initiative_id)
+
+
+def create_measure(db_path: Path, initiative_id: str, payload: MeasureCreate) -> MeasureOut:
+    now = _now_iso()
+    measure_id = str(uuid4())
+    name = payload.name.strip()
+    if not name:
+        raise ValidationError("Measure name cannot be blank.")
+    with get_connection(db_path) as conn:
+        _editable_initiative(conn, initiative_id)
+        _assert_unique_measure_name(conn, initiative_id, name)
+        next_sort = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM initiative_measures WHERE initiative_id = ?",
+            (initiative_id,),
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO initiative_measures (
+                id, initiative_id, name, unit, direction, description, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                measure_id,
+                initiative_id,
+                name,
+                payload.unit.strip(),
+                payload.direction,
+                payload.description.strip(),
+                int(next_sort),
+                now,
+                now,
+            ),
+        )
+        conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
+        return _row_to_measure(_get_measure_row(conn, initiative_id, measure_id))
+
+
+def update_measure(
+    db_path: Path, initiative_id: str, measure_id: str, payload: MeasureUpdate
+) -> MeasureOut:
+    now = _now_iso()
+    with get_connection(db_path) as conn:
+        _editable_initiative(conn, initiative_id)
+        current = _get_measure_row(conn, initiative_id, measure_id)
+        name = payload.name.strip() if payload.name is not None else current["name"]
+        if not name:
+            raise ValidationError("Measure name cannot be blank.")
+        _assert_unique_measure_name(conn, initiative_id, name, exclude_id=measure_id)
+        conn.execute(
+            """
+            UPDATE initiative_measures
+            SET name = ?, unit = ?, direction = ?, description = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                payload.unit.strip() if payload.unit is not None else current["unit"],
+                payload.direction or current["direction"],
+                payload.description.strip() if payload.description is not None else current["description"],
+                now,
+                measure_id,
+            ),
+        )
+        conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
+        return _row_to_measure(_get_measure_row(conn, initiative_id, measure_id))
+
+
+def delete_measure(db_path: Path, initiative_id: str, measure_id: str) -> None:
+    now = _now_iso()
+    with get_connection(db_path) as conn:
+        _editable_initiative(conn, initiative_id)
+        _get_measure_row(conn, initiative_id, measure_id)
+        conn.execute("DELETE FROM initiative_measures WHERE id = ?", (measure_id,))
+        conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
+
+
+def set_measure_value(
+    db_path: Path, initiative_id: str, bca_id: str, measure_id: str, payload: MeasureValueIn
+) -> MeasureValueOut:
+    now = _now_iso()
+    with get_connection(db_path) as conn:
+        init_row = _editable_initiative(conn, initiative_id)
+        _resolve_bca_dict(conn, _row_to_initiative_dict(init_row), bca_id)
+        _get_measure_row(conn, initiative_id, measure_id)
+        note = payload.note.strip()
+        conn.execute(
+            """
+            INSERT INTO bca_measure_values (bca_id, measure_id, value, low, high, note, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (bca_id, measure_id) DO UPDATE SET
+                value = excluded.value, low = excluded.low, high = excluded.high,
+                note = excluded.note, updated_at = excluded.updated_at
+            """,
+            (bca_id, measure_id, payload.value, payload.low, payload.high, note, now),
+        )
+        conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
+    return MeasureValueOut(
+        measure_id=measure_id, value=payload.value, low=payload.low, high=payload.high, note=note, updated_at=now
+    )
+
+
+def clear_measure_value(db_path: Path, initiative_id: str, bca_id: str, measure_id: str) -> None:
+    now = _now_iso()
+    with get_connection(db_path) as conn:
+        init_row = _editable_initiative(conn, initiative_id)
+        _resolve_bca_dict(conn, _row_to_initiative_dict(init_row), bca_id)
+        _get_measure_row(conn, initiative_id, measure_id)
+        conn.execute(
+            "DELETE FROM bca_measure_values WHERE bca_id = ? AND measure_id = ?", (bca_id, measure_id)
+        )
+        conn.execute("UPDATE initiatives SET updated_at = ? WHERE id = ?", (now, initiative_id))
 
 
 # --- Line Item operations ---
