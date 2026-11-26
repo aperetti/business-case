@@ -248,6 +248,23 @@ export interface MeasureValueOut {
   updated_at: string;
 }
 
+/** Joint Monte Carlo draws for one BCA; index i of every list is the same simulated future. */
+export interface PairwiseCaseSamples {
+  bca_id: string;
+  npv: number[];
+  bcr: (number | null)[];
+  pv_benefits: number[];
+  pv_costs: number[];
+  payback: (number | null)[];
+  measures: Record<string, number[]>;
+}
+
+export interface PairwiseSamples {
+  n_points: number;
+  seed: number;
+  cases: PairwiseCaseSamples[];
+}
+
 export interface BCASummary {
   id: string;
   initiative_id: string;

@@ -322,6 +322,356 @@ def _seed_baseline_catalog(conn: sqlite3.Connection, now_iso: str) -> None:
         )
 
 
+# Non-wires alternative (NWA) example: a utility feeder is over its summer rating. The baseline
+# case re-wires (reconductors) the feeder; the alternative contracts dispatchable capacity from a
+# fleet of residential batteries. Both carry the same capacity and reliability benefit lines so the
+# cases compare like for like; SAIDI is tracked as non-monetary measures. All figures are
+# illustrative planning assumptions, not vendor quotes.
+_NWA_RAMP_20 = [0.5, 0.9] + [1.0] * 18
+
+NWA_FEEDER_DEMO: dict = {
+    "name": "Feeder 12F4 Capacity: Re-wire vs Residential Batteries (NWA)",
+    "description": (
+        "Non-wires alternative screening for feeder 12F4 (12.47 kV, 1,850 customers), which peaks at "
+        "11.4 MW against a 10.0 MW summer rating with about 2% annual load growth. Compares a "
+        "conventional feeder re-wire with a contracted fleet of Base Power residential batteries "
+        "dispatched at the feeder peak. Illustrative assumptions over a 20-year horizon."
+    ),
+    "domain": "energy",
+    "horizon_years": 20,
+    "discount_rate": 0.065,
+    "cost_start_year": 2027,
+    "external_resource_url": "",
+    "baseline_bca_name": "Wires: Feeder Re-wire",
+    "baseline_bca_description": (
+        "Reconductor 6.2 circuit miles to 795 kcmil and add two automated sectionalizing points. "
+        "Adds about 6 MW of headroom; overload relief starts once construction finishes in year 3."
+    ),
+    "items": [
+        {
+            "catalog_id": "COST-BUILD-01",
+            "label": "Feeder Reconductor (6.2 mi to 795 kcmil)",
+            "value_stream": "Capacity Relief",
+            "start_year": 1,
+            "end_year": 2,
+            "ramp_profile": "custom_weights",
+            "ramp_weights": [0.35, 1.0],
+            "param_values": {"hours": 9800.0, "hourly_rate": 165.0, "vendor_cost": 2450000.0},
+            "uncertainty_spec": {
+                "correlation_group": "construction",
+                "correlation_rho": 0.70,
+                "parameters": {
+                    "hours": {"distribution": "pert", "low_pct": -0.10, "high_pct": 0.35},
+                    "vendor_cost": {"distribution": "pert", "low_pct": -0.10, "high_pct": 0.45},
+                },
+            },
+            "anti_double_count_tag": None,
+        },
+        {
+            "catalog_id": "COST-RUN-01",
+            "label": "Incremental Feeder O&M & Inspection",
+            "value_stream": "Grid Operations",
+            "start_year": 3,
+            "end_year": 20,
+            "ramp_profile": "immediate",
+            "ramp_weights": None,
+            "param_values": {
+                "annual_infra_cost": 12000.0,
+                "annual_license_cost": 0.0,
+                "support_hours_per_year": 160.0,
+                "hourly_rate": 140.0,
+            },
+            "uncertainty_spec": {
+                "parameters": {"support_hours_per_year": {"distribution": "normal", "std_pct": 0.20}},
+            },
+            "anti_double_count_tag": None,
+        },
+        {
+            "catalog_id": "COST-LIFE-01",
+            "label": "Sectionalizer & Recloser Lifecycle Reserve",
+            "value_stream": "Reliability",
+            "start_year": 3,
+            "end_year": 20,
+            "ramp_profile": "immediate",
+            "ramp_weights": None,
+            "param_values": {"refresh_cost": 240000.0, "refresh_interval_years": 10.0},
+            "uncertainty_spec": {
+                "parameters": {
+                    "refresh_cost": {"distribution": "triangular", "low": 180000.0, "mode": 240000.0, "high": 340000.0},
+                },
+            },
+            "anti_double_count_tag": None,
+        },
+        {
+            "catalog_id": "BEN-QUAL-01",
+            "label": "Avoided Overload Load-Shed & Emergency Switching",
+            "value_stream": "Capacity Relief",
+            "start_year": 3,
+            "end_year": 20,
+            "ramp_profile": "immediate",
+            "ramp_weights": None,
+            "param_values": {"baseline_events_per_year": 7.0, "risk_reduction_pct": 0.97, "cost_per_event": 82000.0},
+            "uncertainty_spec": {
+                "correlation_group": "load_growth",
+                "correlation_rho": 0.70,
+                "parameters": {
+                    "baseline_events_per_year": {"distribution": "pert", "low": 4.0, "mode": 7.0, "high": 12.0},
+                    "cost_per_event": {"distribution": "lognormal", "std_pct": 0.35},
+                },
+            },
+            "anti_double_count_tag": "feeder_overload",
+        },
+        {
+            "catalog_id": "BEN-QUAL-01",
+            "label": "Avoided Customer Interruption Cost (SAIDI, ICE-valued)",
+            "value_stream": "Reliability",
+            "start_year": 3,
+            "end_year": 20,
+            "ramp_profile": "immediate",
+            "ramp_weights": None,
+            "param_values": {"baseline_events_per_year": 16.0, "risk_reduction_pct": 0.17, "cost_per_event": 52000.0},
+            "uncertainty_spec": {
+                "correlation_group": "reliability",
+                "correlation_rho": 0.60,
+                "parameters": {
+                    "risk_reduction_pct": {"distribution": "pert", "low": 0.08, "mode": 0.17, "high": 0.25},
+                    "cost_per_event": {"distribution": "lognormal", "std_pct": 0.40},
+                },
+            },
+            "anti_double_count_tag": "feeder_interruptions",
+        },
+        {
+            "catalog_id": "BEN-QUAL-01",
+            "label": "Avoided Conductor Failure Repairs",
+            "value_stream": "Grid Operations",
+            "start_year": 3,
+            "end_year": 20,
+            "ramp_profile": "immediate",
+            "ramp_weights": None,
+            "param_values": {"baseline_events_per_year": 5.0, "risk_reduction_pct": 0.60, "cost_per_event": 38000.0},
+            "uncertainty_spec": {
+                "parameters": {
+                    "risk_reduction_pct": {"distribution": "pert", "low": 0.40, "mode": 0.60, "high": 0.75},
+                },
+            },
+            "anti_double_count_tag": None,
+        },
+    ],
+    "measures": [
+        {
+            "name": "SAIDI (customer-experienced)",
+            "unit": "min/customer/yr",
+            "direction": "lower_is_better",
+            "description": (
+                "Minutes without power per customer per year on the feeder, counting battery-backed homes "
+                "as served while their battery carries them. Feeder today: 142."
+            ),
+        },
+        {
+            "name": "SAIDI (reported, IEEE 1366)",
+            "unit": "min/customer/yr",
+            "direction": "lower_is_better",
+            "description": (
+                "Sustained interruption minutes per customer as reported to the regulator. Behind-the-meter "
+                "backup is not credited, so batteries only help where they prevent overload outages. Today: 142."
+            ),
+        },
+        {
+            "name": "Peak capacity headroom",
+            "unit": "MW",
+            "direction": "higher_is_better",
+            "description": "Firm capacity left above the forecast year-5 feeder peak.",
+        },
+        {
+            "name": "Time to relieve overload",
+            "unit": "months",
+            "direction": "lower_is_better",
+            "description": "Months from approval until the feeder stops exceeding its summer rating.",
+        },
+    ],
+    "baseline_measure_values": {
+        "SAIDI (customer-experienced)": {
+            "value": 118.0, "low": 108.0, "high": 130.0,
+            "note": "Fewer conductor failures and two new sectionalizing points.",
+        },
+        "SAIDI (reported, IEEE 1366)": {
+            "value": 118.0, "low": 108.0, "high": 130.0,
+            "note": "Same as customer-experienced: every improvement is on the utility side of the meter.",
+        },
+        "Peak capacity headroom": {"value": 5.8, "low": 5.2, "high": 6.4, "note": "795 kcmil summer rating less forecast peak."},
+        "Time to relieve overload": {
+            "value": 26.0, "low": 20.0, "high": 36.0,
+            "note": "Design, permitting, material lead time and two construction seasons.",
+        },
+    },
+    "extra_bcas": [
+        {
+            "name": "NWA: Base Power Residential Batteries",
+            "description": (
+                "Contract 2.6 MW of peak capacity from about 320 Base Power home batteries on the feeder, "
+                "dispatched through the utility DERMS. Homes keep backup power during outages. Keeps a "
+                "contingency for a partial reconductor if load growth outruns the fleet."
+            ),
+            "items": [
+                {
+                    "catalog_id": "COST-BUILD-01",
+                    "label": "DERMS Integration, Interconnection Studies & Launch",
+                    "value_stream": "Grid Operations",
+                    "start_year": 1,
+                    "end_year": 1,
+                    "ramp_profile": "immediate",
+                    "ramp_weights": None,
+                    "param_values": {"hours": 2600.0, "hourly_rate": 150.0, "vendor_cost": 420000.0},
+                    "uncertainty_spec": {
+                        "parameters": {
+                            "hours": {"distribution": "pert", "low_pct": -0.10, "high_pct": 0.40},
+                            "vendor_cost": {"distribution": "triangular", "low_pct": -0.05, "high_pct": 0.25},
+                        },
+                    },
+                    "anti_double_count_tag": None,
+                },
+                {
+                    "catalog_id": "COST-RUN-01",
+                    "label": "Base Power Capacity Contract & DERMS Operations",
+                    "value_stream": "Capacity Relief",
+                    "start_year": 1,
+                    "end_year": 20,
+                    "ramp_profile": "custom_weights",
+                    "ramp_weights": _NWA_RAMP_20,
+                    "param_values": {
+                        "annual_infra_cost": 312000.0,
+                        "annual_license_cost": 72000.0,
+                        "support_hours_per_year": 700.0,
+                        "hourly_rate": 140.0,
+                    },
+                    "uncertainty_spec": {
+                        "correlation_group": "fleet",
+                        "correlation_rho": 0.60,
+                        "parameters": {
+                            "annual_infra_cost": {"distribution": "pert", "low_pct": -0.10, "high_pct": 0.25},
+                            "support_hours_per_year": {"distribution": "normal", "std_pct": 0.20},
+                        },
+                    },
+                    "anti_double_count_tag": None,
+                },
+                {
+                    "catalog_id": "COST-ENAB-01",
+                    "label": "Customer Enrollment & Installer Coordination",
+                    "value_stream": "Grid Operations",
+                    "start_year": 1,
+                    "end_year": 2,
+                    "ramp_profile": "custom_weights",
+                    "ramp_weights": [1.0, 0.5],
+                    "param_values": {
+                        "training_hours": 2.0,
+                        "affected_staff": 320.0,
+                        "hourly_rate": 95.0,
+                        "transition_cost": 160000.0,
+                    },
+                    "uncertainty_spec": {
+                        "correlation_group": "fleet",
+                        "correlation_rho": 0.50,
+                        "item_multiplier": {"distribution": "triangular", "low": 0.85, "mode": 1.0, "high": 1.45},
+                    },
+                    "anti_double_count_tag": None,
+                },
+                {
+                    "catalog_id": "COST-LIFE-01",
+                    "label": "Load-Growth Contingency (Partial Reconductor)",
+                    "value_stream": "Capacity Relief",
+                    "start_year": 9,
+                    "end_year": 20,
+                    "ramp_profile": "immediate",
+                    "ramp_weights": None,
+                    "param_values": {"refresh_cost": 2400000.0, "refresh_interval_years": 12.0},
+                    "uncertainty_spec": {
+                        "correlation_group": "load_growth",
+                        "correlation_rho": 0.60,
+                        "parameters": {
+                            "refresh_cost": {"distribution": "triangular", "low": 1200000.0, "mode": 2400000.0, "high": 4000000.0},
+                        },
+                    },
+                    "anti_double_count_tag": None,
+                },
+                {
+                    "catalog_id": "BEN-QUAL-01",
+                    "label": "Avoided Overload Load-Shed & Emergency Switching",
+                    "value_stream": "Capacity Relief",
+                    "start_year": 1,
+                    "end_year": 20,
+                    "ramp_profile": "custom_weights",
+                    "ramp_weights": _NWA_RAMP_20,
+                    "param_values": {"baseline_events_per_year": 7.0, "risk_reduction_pct": 0.86, "cost_per_event": 82000.0},
+                    "uncertainty_spec": {
+                        "correlation_group": "load_growth",
+                        "correlation_rho": 0.70,
+                        "parameters": {
+                            "baseline_events_per_year": {"distribution": "pert", "low": 4.0, "mode": 7.0, "high": 12.0},
+                            "risk_reduction_pct": {"distribution": "pert", "low": 0.60, "mode": 0.86, "high": 0.95},
+                            "cost_per_event": {"distribution": "lognormal", "std_pct": 0.35},
+                        },
+                    },
+                    "anti_double_count_tag": "feeder_overload",
+                },
+                {
+                    "catalog_id": "BEN-QUAL-01",
+                    "label": "Avoided Customer Interruption Cost (SAIDI, ICE-valued)",
+                    "value_stream": "Reliability",
+                    "start_year": 1,
+                    "end_year": 20,
+                    "ramp_profile": "custom_weights",
+                    "ramp_weights": _NWA_RAMP_20,
+                    "param_values": {"baseline_events_per_year": 16.0, "risk_reduction_pct": 0.24, "cost_per_event": 52000.0},
+                    "uncertainty_spec": {
+                        "correlation_group": "reliability",
+                        "correlation_rho": 0.60,
+                        "parameters": {
+                            "risk_reduction_pct": {"distribution": "pert", "low": 0.12, "mode": 0.24, "high": 0.33},
+                            "cost_per_event": {"distribution": "lognormal", "std_pct": 0.40},
+                        },
+                    },
+                    "anti_double_count_tag": "feeder_interruptions",
+                },
+                {
+                    "catalog_id": "BEN-QUAL-01",
+                    "label": "Avoided Transmission Peak (4CP) Charges",
+                    "value_stream": "Grid Operations",
+                    "start_year": 1,
+                    "end_year": 20,
+                    "ramp_profile": "custom_weights",
+                    "ramp_weights": _NWA_RAMP_20,
+                    "param_values": {"baseline_events_per_year": 12.0, "risk_reduction_pct": 0.55, "cost_per_event": 16000.0},
+                    "uncertainty_spec": {
+                        "parameters": {
+                            "risk_reduction_pct": {"distribution": "pert", "low": 0.30, "mode": 0.55, "high": 0.75},
+                        },
+                    },
+                    "anti_double_count_tag": None,
+                },
+            ],
+            "measure_values": {
+                "SAIDI (customer-experienced)": {
+                    "value": 94.0, "low": 82.0, "high": 112.0,
+                    "note": "About 17% of customers ride through outages on battery; overload outages largely avoided.",
+                },
+                "SAIDI (reported, IEEE 1366)": {
+                    "value": 133.0, "low": 124.0, "high": 140.0,
+                    "note": "Only the avoided overload outages count; backed-up homes are still metered as interrupted.",
+                },
+                "Peak capacity headroom": {
+                    "value": 1.4, "low": 0.8, "high": 2.0,
+                    "note": "2.6 MW contracted, derated for dispatch performance, less the 1.4 MW overload.",
+                },
+                "Time to relieve overload": {
+                    "value": 8.0, "low": 5.0, "high": 14.0,
+                    "note": "Enrollment and installs ahead of the first summer peak.",
+                },
+            },
+        },
+    ],
+}
+
+
 DEMO_INITIATIVES: list[dict] = [
     {
         "name": "Platform Delivery & Incident Automation Program",
@@ -946,6 +1296,7 @@ DEMO_INITIATIVES: list[dict] = [
             },
         ],
     },
+    NWA_FEEDER_DEMO,
 ]
 
 
@@ -1021,9 +1372,17 @@ def _insert_bca_bundle(
         conn.execute(
             """
             INSERT INTO bca_measure_values (bca_id, measure_id, value, low, high, note, updated_at)
-            VALUES (?, ?, ?, ?, ?, '', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (bca_id, (measure_ids or {})[name], est["value"], est.get("low"), est.get("high"), now_iso),
+            (
+                bca_id,
+                (measure_ids or {})[name],
+                est["value"],
+                est.get("low"),
+                est.get("high"),
+                est.get("note", ""),
+                now_iso,
+            ),
         )
     return bca_id
 
@@ -1108,8 +1467,8 @@ def _seed_demo_initiative(conn: sqlite3.Connection, now_iso: str) -> None:
         _insert_initiative_bundle(conn, spec, now_iso)
 
 
-def seed_missing_demos(db_path: Path) -> list[str]:
-    """Insert any missing example initiatives by name without touching existing data."""
+def seed_missing_demos(db_path: Path, names: list[str] | None = None) -> list[str]:
+    """Insert missing example initiatives (all, or only ``names``) without touching existing data."""
     now_iso = datetime.now(timezone.utc).isoformat()
     created_ids: list[str] = []
     with get_connection(db_path) as conn:
@@ -1117,6 +1476,8 @@ def seed_missing_demos(db_path: Path) -> list[str]:
             row["name"] for row in conn.execute("SELECT name FROM initiatives").fetchall()
         }
         for spec in DEMO_INITIATIVES:
+            if names is not None and spec["name"] not in names:
+                continue
             if spec["name"] not in existing_names:
                 created_ids.append(_insert_initiative_bundle(conn, spec, now_iso))
     return created_ids

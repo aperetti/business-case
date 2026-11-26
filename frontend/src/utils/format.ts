@@ -107,4 +107,5 @@ export const DOMAIN_OPTIONS = [
   { value: 'capability', label: 'Shared Capability' },
   { value: 'infrastructure', label: 'Infrastructure & Cloud' },
   { value: 'operations', label: 'Operations & SRE' },
+  { value: 'energy', label: 'Energy & Utilities' },
 ];

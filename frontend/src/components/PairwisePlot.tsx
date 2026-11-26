@@ -1,11 +1,13 @@
-import { Fragment, useMemo, useState } from 'react';
-import { Chip, Group, Paper, SegmentedControl, Stack, Table, Text, Title } from '@mantine/core';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Chip, Group, Loader, Paper, SegmentedControl, Stack, Table, Text, Title } from '@mantine/core';
 import { useElementSize } from '@mantine/hooks';
-import type { BCASummary, MeasureOut } from '../types/api';
+import { api } from '../api/client';
+import type { BCASummary, MeasureOut, PairwiseCaseSamples } from '../types/api';
 import { formatCompactCurrency, formatPercent } from '../utils/format';
 import { formatMeasureNumber } from './NonMonetaryBenefitsPanel';
 
 interface Props {
+  initiativeId: string;
   bcas: BCASummary[];
   measures: MeasureOut[];
 }
@@ -25,6 +27,72 @@ interface PairVar {
   monetary: boolean;
   format: (v: number) => string;
   get: (b: BCASummary) => Estimate | null;
+  /** Monte Carlo draws for this variable, or undefined when it has none (e.g. P(NPV > 0)). */
+  draws?: (s: PairwiseCaseSamples) => (number | null)[] | undefined;
+}
+
+type Mode = 'mc' | 'estimates';
+
+/** Distribution summary of one variable's draws for one case. */
+interface DrawStats {
+  p10: number;
+  p50: number;
+  p90: number;
+  /** Finite draws, in draw order (aligned with the other variables only via `raw`). */
+  values: number[];
+  raw: (number | null)[];
+  missing: number;
+}
+
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return NaN;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+function drawStats(raw: (number | null)[]): DrawStats | null {
+  const values = raw.filter((v): v is number => v !== null && Number.isFinite(v));
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    p10: quantile(sorted, 0.1),
+    p50: quantile(sorted, 0.5),
+    p90: quantile(sorted, 0.9),
+    values: sorted,
+    raw,
+    missing: raw.length - values.length,
+  };
+}
+
+/** Gaussian kernel density on `n` grid points over [min, max]; null when the draws are constant. */
+function density(sorted: number[], min: number, max: number, n = 48): number[] | null {
+  const m = sorted.length;
+  const mean = sorted.reduce((a, b) => a + b, 0) / m;
+  const sd = Math.sqrt(sorted.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(m - 1, 1));
+  const iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25);
+  const spread = Math.min(sd, iqr > 0 ? iqr / 1.34 : sd);
+  if (!(spread > 0)) return null;
+  const h = 0.9 * spread * m ** -0.2;
+  const out: number[] = [];
+  for (let g = 0; g < n; g += 1) {
+    const x = min + ((max - min) * g) / (n - 1);
+    let sum = 0;
+    for (const v of sorted) {
+      const z = (x - v) / h;
+      if (z > -4 && z < 4) sum += Math.exp(-0.5 * z * z);
+    }
+    out.push(sum);
+  }
+  return out;
+}
+
+/** One SVG path of small dots: far cheaper than an element per draw. */
+function dotsPath(points: [number, number][], r: number): string {
+  let d = '';
+  for (const [x, y] of points) d += `M${(x - r).toFixed(1)},${y.toFixed(1)}a${r},${r} 0 1,0 ${2 * r},0a${r},${r} 0 1,0 ${-2 * r},0`;
+  return d;
 }
 
 const SHAPES = ['circle', 'square', 'triangle', 'diamond', 'triangleDown', 'plus', 'hexagon', 'star'] as const;
@@ -120,6 +188,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
       monetary: true,
       format: formatCompactCurrency,
       get: (b) => point(b.npv, b.latest_npv_p10, b.latest_npv_p90),
+      draws: (s) => s.npv,
     },
     {
       id: 'bcr',
@@ -129,6 +198,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
       monetary: true,
       format: (v) => `${v.toFixed(2)}x`,
       get: (b) => point(b.bcr),
+      draws: (s) => s.bcr,
     },
     {
       id: 'pv_benefits',
@@ -138,6 +208,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
       monetary: true,
       format: formatCompactCurrency,
       get: (b) => point(b.pv_benefits),
+      draws: (s) => s.pv_benefits,
     },
     {
       id: 'pv_costs',
@@ -147,6 +218,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
       monetary: true,
       format: formatCompactCurrency,
       get: (b) => point(b.pv_costs),
+      draws: (s) => s.pv_costs,
     },
     {
       id: 'payback',
@@ -156,6 +228,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
       monetary: true,
       format: (v) => `${v.toFixed(1)} yr`,
       get: (b) => point(b.discounted_payback_year),
+      draws: (s) => s.payback,
     },
   ];
   if (bcas.some((b) => b.latest_prob_npv_positive !== null)) {
@@ -181,6 +254,7 @@ function buildVariables(bcas: BCASummary[], measures: MeasureOut[]): PairVar[] {
         const v = b.measure_values[m.id];
         return v ? point(v.value, v.low, v.high) : null;
       },
+      draws: (s) => s.measures[m.id],
     });
   }
   return vars;
@@ -206,6 +280,11 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, Math.max(max - 1, 1))}…` : text;
 }
 
+function statsText(v: PairVar, st: DrawStats): string {
+  const unit = v.unit && !v.monetary ? ` ${v.unit}` : '';
+  return `${v.format(st.p50)}${unit} (P10–P90 ${v.format(st.p10)}–${v.format(st.p90)})`;
+}
+
 function rangeText(v: PairVar, e: Estimate): string {
   const main = v.format(e.value) + (v.unit && !v.monetary ? ` ${v.unit}` : '');
   if (e.low === null && e.high === null) return main;
@@ -217,10 +296,49 @@ function rangeText(v: PairVar, e: Estimate): string {
  * business case as a category: lower cells plot one measure against another, the diagonal
  * shows each measure on its own. Whiskers show low–high ranges where known.
  */
-export function PairwisePlot({ bcas, measures }: Props) {
-  const variables = useMemo(() => buildVariables(bcas, measures), [bcas, measures]);
+export function PairwisePlot({ initiativeId, bcas, measures }: Props) {
+  const [mode, setMode] = useState<Mode>('mc');
+  const allVariables = useMemo(() => buildVariables(bcas, measures), [bcas, measures]);
+  const variables = mode === 'mc' ? allVariables.filter((v) => v.draws) : allVariables;
   const [picked, setPicked] = useState<string[] | null>(null);
   const [view, setView] = useState<'chart' | 'table'>('chart');
+  const [samples, setSamples] = useState<Record<string, PairwiseCaseSamples> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Refetch only when something that feeds the simulation changes, not on every new array.
+  const dataKey = useMemo(
+    () =>
+      JSON.stringify([
+        initiativeId,
+        bcas.map((b) => [b.id, b.npv, b.pv_costs, b.pv_benefits, b.horizon_years, b.discount_rate, b.updated_at, b.measure_values]),
+      ]),
+    [initiativeId, bcas]
+  );
+  useEffect(() => {
+    if (mode !== 'mc') return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    api
+      .getPairwiseSamples(initiativeId)
+      .then((res) => {
+        if (cancelled) return;
+        setSamples(Object.fromEntries(res.cases.map((c) => [c.bca_id, c])));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not run the simulation.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // dataKey captures initiativeId and the case inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataKey, mode]);
+  const useMc = mode === 'mc' && samples !== null;
   const [hover, setHover] = useState<Hover | null>(null);
   const [hiddenCases, setHiddenCases] = useState<Set<string>>(new Set());
   const { ref, width } = useElementSize();
@@ -236,10 +354,36 @@ export function PairwisePlot({ bcas, measures }: Props) {
   const plotSize = cell * k;
 
   const selectedKey = selected.map((v) => v.id).join('|');
+  /** stats[varId][bcaId] from the Monte Carlo draws. */
+  const stats = useMemo(() => {
+    const out: Record<string, Record<string, DrawStats | null>> = {};
+    if (!samples) return out;
+    for (const v of allVariables) {
+      if (!v.draws) continue;
+      out[v.id] = {};
+      for (const b of bcas) {
+        const s = samples[b.id];
+        const raw = s ? v.draws(s) : undefined;
+        out[v.id][b.id] = raw ? drawStats(raw) : null;
+      }
+    }
+    return out;
+  }, [samples, allVariables, bcas]);
+  const statFor = (v: PairVar, b: BCASummary): DrawStats | null => stats[v.id]?.[b.id] ?? null;
+
   const scales = useMemo(
     () =>
       selected.map((v) => {
         const vals: number[] = [];
+        if (useMc) {
+          // 1st–99th percentile per case keeps a few extreme draws from flattening the cloud.
+          for (const c of cases) {
+            const st = statFor(v, c.bca);
+            if (!st) continue;
+            vals.push(quantile(st.values, 0.01), quantile(st.values, 0.99));
+          }
+          return vals.length ? scaleFor(vals) : null;
+        }
         for (const c of cases) {
           const e = v.get(c.bca);
           if (!e) continue;
@@ -251,7 +395,7 @@ export function PairwisePlot({ bcas, measures }: Props) {
       }),
     // `selected` is rebuilt each render; key the memo on the chosen ids instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedKey, bcas]
+    [selectedKey, bcas, useMc, stats]
   );
 
   const toX = (j: number, value: number) => {
@@ -286,19 +430,33 @@ export function PairwisePlot({ bcas, measures }: Props) {
           <div style={{ minWidth: 0, flex: '1 1 320px' }}>
             <Title order={5}>Pair-wise Measures</Title>
             <Text size="xs" c="var(--text-muted)">
-              Each business case is a category. Lower cells plot one measure against another; the diagonal shows a
-              single measure. Whiskers show the low–high range (Monte Carlo P10–P90 for NPV once simulated).
+              {mode === 'mc'
+                ? `Each business case is a category. Lower cells show ${samples ? Object.values(samples)[0]?.npv.length ?? '' : ''} Monte Carlo draws per case, one measure against another, with the median marked; the diagonal shows each measure's distribution. Financial results in a draw come from the same simulated future. Non-monetary measures are drawn independently from their low–expected–high range.`
+                : 'Each business case is a category. Lower cells plot one measure against another; the diagonal shows a single measure. Whiskers show the low–high range (Monte Carlo P10–P90 for NPV once simulated).'}
             </Text>
           </div>
-          <SegmentedControl
-            size="xs"
-            value={view}
-            onChange={(v) => setView(v as 'chart' | 'table')}
-            data={[
-              { value: 'chart', label: 'Chart' },
-              { value: 'table', label: 'Table' },
-            ]}
-          />
+          <Group gap="xs" wrap="wrap">
+            <SegmentedControl
+              size="xs"
+              value={mode}
+              onChange={(v) => setMode(v as Mode)}
+              aria-label="Values to plot"
+              data={[
+                { value: 'mc', label: 'Monte Carlo' },
+                { value: 'estimates', label: 'Estimates' },
+              ]}
+            />
+            <SegmentedControl
+              size="xs"
+              value={view}
+              onChange={(v) => setView(v as 'chart' | 'table')}
+              aria-label="Chart or table"
+              data={[
+                { value: 'chart', label: 'Chart' },
+                { value: 'table', label: 'Table' },
+              ]}
+            />
+          </Group>
         </Group>
 
         <Stack gap={6} mb="sm">
@@ -351,6 +509,15 @@ export function PairwisePlot({ bcas, measures }: Props) {
           )}
         </Group>
 
+        {mode === 'mc' && (loading || loadError) && (
+          <Group gap="xs" mb="xs">
+            {loading && <Loader size="xs" />}
+            <Text size="xs" c={loadError ? 'red' : 'var(--text-muted)'}>
+              {loadError ? `Monte Carlo draws unavailable: ${loadError}` : 'Running Monte Carlo…'}
+            </Text>
+          </Group>
+        )}
+
         {k === 0 ? (
           <Text size="sm" c="var(--text-muted)" py="lg" ta="center">
             Pick at least one measure.
@@ -381,6 +548,10 @@ export function PairwisePlot({ bcas, measures }: Props) {
                       </Group>
                     </Table.Td>
                     {selected.map((v) => {
+                      if (useMc) {
+                        const st = statFor(v, c.bca);
+                        return <Table.Td key={v.id}>{st ? statsText(v, st) : '—'}</Table.Td>;
+                      }
                       const e = v.get(c.bca);
                       return <Table.Td key={v.id}>{e ? rangeText(v, e) : '—'}</Table.Td>;
                     })}
@@ -455,6 +626,59 @@ export function PairwisePlot({ bcas, measures }: Props) {
                                 </div>
                               </foreignObject>
                               {sx &&
+                                useMc &&
+                                (() => {
+                                  const base = y0 + cell - INSET;
+                                  const height = cell * 0.42;
+                                  const curves = visibleCases.map((c) => {
+                                    const st = statFor(vx, c.bca);
+                                    return { c, st, dens: st ? density(st.values, sx.min, sx.max) : null };
+                                  });
+                                  const peak = Math.max(1e-12, ...curves.flatMap((cv) => cv.dens ?? []));
+                                  return curves.map(({ c, st, dens }) => {
+                                    if (!st) return null;
+                                    const hoverLines = [
+                                      `${vx.label}: ${statsText(vx, st)}`,
+                                      ...(st.missing > 0
+                                        ? [`${st.missing} of ${st.raw.length} draws have no value${vx.id === 'payback' ? ' (never pay back in the horizon)' : ''}`]
+                                        : []),
+                                    ];
+                                    const xm = toX(j, st.p50);
+                                    if (!dens) {
+                                      // Constant estimate (no range): a single tick.
+                                      return (
+                                        <g key={c.bca.id} onMouseEnter={(evt) => showHover(evt, c.bca, hoverLines)}>
+                                          <line x1={xm} x2={xm} y1={base} y2={base - height} stroke={caseColor(c.idx)} strokeWidth={2} />
+                                          <g transform={`translate(${xm},${base})`}>
+                                            <Marker shape={c.shape} color={caseColor(c.idx)} r={4} />
+                                          </g>
+                                        </g>
+                                      );
+                                    }
+                                    const pts = dens.map((d, g) => {
+                                      const x = toX(j, sx.min + ((sx.max - sx.min) * g) / (dens.length - 1));
+                                      return `${x.toFixed(1)},${(base - (d / peak) * height).toFixed(1)}`;
+                                    });
+                                    const xFirst = toX(j, sx.min);
+                                    const xLast = toX(j, sx.max);
+                                    return (
+                                      <g key={c.bca.id} onMouseEnter={(evt) => showHover(evt, c.bca, hoverLines)}>
+                                        <path
+                                          d={`M${xFirst},${base}L${pts.join('L')}L${xLast},${base}Z`}
+                                          fill={caseColor(c.idx)}
+                                          fillOpacity={0.16}
+                                          stroke={caseColor(c.idx)}
+                                          strokeWidth={1.5}
+                                        />
+                                        <g transform={`translate(${xm},${base})`}>
+                                          <Marker shape={c.shape} color={caseColor(c.idx)} r={4} />
+                                        </g>
+                                      </g>
+                                    );
+                                  });
+                                })()}
+                              {sx &&
+                                !useMc &&
                                 visibleCases.map((c, n) => {
                                   const e = vx.get(c.bca);
                                   if (!e) return null;
@@ -493,6 +717,59 @@ export function PairwisePlot({ bcas, measures }: Props) {
                                 </text>
                               )}
                             </>
+                          ) : useMc ? (
+                            sx &&
+                            sy && (
+                              <>
+                                {visibleCases.map((c) => {
+                                  const stx = statFor(vx, c.bca);
+                                  const sty = statFor(vy, c.bca);
+                                  if (!stx || !sty) return null;
+                                  const pts: [number, number][] = [];
+                                  const n = Math.min(stx.raw.length, sty.raw.length);
+                                  for (let d = 0; d < n; d += 1) {
+                                    const a = stx.raw[d];
+                                    const b = sty.raw[d];
+                                    if (a === null || b === null || !Number.isFinite(a) || !Number.isFinite(b)) continue;
+                                    if (a < sx.min || a > sx.max || b < sy.min || b > sy.max) continue;
+                                    pts.push([toX(j, a), toY(i, b)]);
+                                  }
+                                  return (
+                                    <path
+                                      key={`cloud-${c.bca.id}`}
+                                      d={dotsPath(pts, 1.6)}
+                                      fill={caseColor(c.idx)}
+                                      fillOpacity={0.3}
+                                      pointerEvents="none"
+                                    />
+                                  );
+                                })}
+                                {/* Medians on top of every cloud so no case hides another's marker. */}
+                                {visibleCases.map((c) => {
+                                  const stx = statFor(vx, c.bca);
+                                  const sty = statFor(vy, c.bca);
+                                  if (!stx || !sty) return null;
+                                  const x = toX(j, stx.p50);
+                                  const y = toY(i, sty.p50);
+                                  return (
+                                    <g
+                                      key={`med-${c.bca.id}`}
+                                      onMouseEnter={(evt) =>
+                                        showHover(evt, c.bca, [
+                                          `${vx.label}: ${statsText(vx, stx)}`,
+                                          `${vy.label}: ${statsText(vy, sty)}`,
+                                        ])
+                                      }
+                                    >
+                                      <circle cx={x} cy={y} r={10} fill="transparent" />
+                                      <g transform={`translate(${x},${y})`}>
+                                        <Marker shape={c.shape} color={caseColor(c.idx)} r={5.5} />
+                                      </g>
+                                    </g>
+                                  );
+                                })}
+                              </>
+                            )
                           ) : (
                             sx &&
                             sy &&

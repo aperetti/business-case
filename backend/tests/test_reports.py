@@ -9,7 +9,7 @@ from app.core.reports import _run_is_stale, fmt_axis, report_filename
 
 def _demo(client: TestClient) -> tuple[str, str, str]:
     inits = client.get("/api/initiatives").json()
-    init = max(inits, key=lambda i: i["bca_count"])
+    init = next(i for i in inits if i["domain"] == "software")
     assert init["bca_count"] >= 2
     return init["id"], init["bcas"][0]["id"], init["bcas"][1]["id"]
 

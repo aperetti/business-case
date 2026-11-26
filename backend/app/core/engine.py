@@ -1060,3 +1060,58 @@ def run_monte_carlo_comparison(
         paired=paired,
     )
     return comparison, result_a, result_b
+
+
+def _per_sim_discounted_payback(cum_yearly: np.ndarray) -> np.ndarray:
+    """Discounted payback year per simulation (NaN when it never pays back), same rule as deterministic."""
+    n, horizon = cum_yearly.shape
+    out = np.full(n, np.nan, dtype=np.float64)
+    if horizon == 0:
+        return out
+    neg = cum_yearly < 0.0
+    pays_back = ~neg[:, -1]
+    never_neg = ~neg.any(axis=1)
+    out[pays_back & never_neg] = 1.0
+    rows = np.where(pays_back & ~never_neg)[0]
+    if rows.size:
+        # Index of the last negative year; the crossing is the following year.
+        last_neg = horizon - 1 - np.argmax(neg[rows, ::-1], axis=1)
+        prev_cum = cum_yearly[rows, last_neg]
+        net_year = cum_yearly[rows, last_neg + 1] - prev_cum
+        with np.errstate(divide="ignore", invalid="ignore"):
+            fraction = np.where(net_year > 0.0, -prev_cum / net_year, 1.0)
+        out[rows] = last_neg + 1 + np.clip(fraction, 0.0, 1.0)
+    return out
+
+
+def sample_pairwise_draws(
+    initiative: dict[str, Any],
+    items: list[dict[str, Any]],
+    catalog_map: dict[str, CatalogEntry],
+    *,
+    n_points: int,
+    seed: int,
+) -> dict[str, np.ndarray]:
+    """Joint per-simulation NPV, BCR, PV benefits/costs and payback for one BCA."""
+    req = SimulationRequest(n_simulations=max(n_points, 100), seed=seed, persist=False)
+    _, arrays = _execute_monte_carlo(initiative, items, catalog_map, req)
+    sl = slice(0, n_points)
+    bcr = np.where(arrays.valid_bcr_mask, arrays.bcr_values, np.nan)
+    return {
+        "npv": arrays.sim_npv[sl],
+        "bcr": bcr[sl],
+        "pv_benefits": arrays.sim_pv_benefits[sl],
+        "pv_costs": arrays.sim_pv_costs[sl],
+        "payback": _per_sim_discounted_payback(arrays.cum_yearly)[sl],
+    }
+
+
+def sample_triangular_estimate(
+    value: float, low: float | None, high: float | None, n_points: int, rng: np.random.Generator
+) -> np.ndarray:
+    """Draws for a non-monetary estimate: triangular(low, expected, high), or constant without a range."""
+    lo = value if low is None else min(low, value)
+    hi = value if high is None else max(high, value)
+    if hi - lo <= 0.0:
+        return np.full(n_points, value, dtype=np.float64)
+    return rng.triangular(lo, value, hi, size=n_points)

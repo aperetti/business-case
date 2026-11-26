@@ -17,11 +17,11 @@ def test_health_and_seeded_demo_startup(seeded_client: TestClient) -> None:
     initiatives = seeded_client.get("/api/initiatives")
     assert initiatives.status_code == 200
     init_list = initiatives.json()
-    assert len(init_list) == 3
+    assert len(init_list) == 4
     assert all(item["item_count"] == 6 and item["npv"] > 0.0 for item in init_list)
 
     by_domain = {item["domain"]: item for item in init_list}
-    assert set(by_domain.keys()) == {"software", "automation", "infrastructure"}
+    assert set(by_domain.keys()) == {"software", "automation", "infrastructure", "energy"}
 
     # Verify automation example surfaces the anti-double-count guardrail warning
     auto_detail = seeded_client.get(f"/api/initiatives/{by_domain['automation']['id']}")

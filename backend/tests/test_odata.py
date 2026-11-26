@@ -61,13 +61,13 @@ def test_odata_extraction_math_filters_expand_and_navigation(seeded_client: Test
     inits_resp = seeded_client.get("/odata/v4/Initiatives", params={"$orderby": "Npv desc", "$count": "true"})
     assert inits_resp.status_code == 200
     inits_body = inits_resp.json()
-    assert inits_body["@odata.count"] == 3
+    assert inits_body["@odata.count"] == 4
     init_rows = inits_body["value"]
     assert init_rows[0]["Npv"] >= init_rows[1]["Npv"] >= init_rows[2]["Npv"]
     top_init = init_rows[0]
     top_id = top_init["Id"]
-    assert top_init["CostStartYear"] == 2026
-    assert top_init["CostEndYear"] == 2026 + top_init["HorizonYears"] - 1
+    assert top_init["CostStartYear"] in (2026, 2027)
+    assert top_init["CostEndYear"] == top_init["CostStartYear"] + top_init["HorizonYears"] - 1
 
     sim = seeded_client.post(f"/api/initiatives/{top_id}/simulate", json={"n_simulations": 1000, "seed": 42})
     assert sim.status_code == 200
@@ -94,7 +94,7 @@ def test_odata_extraction_math_filters_expand_and_navigation(seeded_client: Test
     items = nav_items.json()["value"]
     assert len(items) == r_init["ItemCount"]
     assert math.isclose(sum(it["SignedPvTotal"] for it in items), r_init["Npv"], rel_tol=1e-6, abs_tol=1e-3)
-    assert items[0]["CalendarStartYear"] == 2026 + items[0]["StartYear"] - 1
+    assert items[0]["CalendarStartYear"] == top_init["CostStartYear"] + items[0]["StartYear"] - 1
 
     nav_flows = seeded_client.get(f"/odata/v4/Initiatives('{top_id}')/YearlyCashFlows")
     assert nav_flows.status_code == 200
@@ -106,7 +106,7 @@ def test_odata_extraction_math_filters_expand_and_navigation(seeded_client: Test
     # Scalar /$count & filtered /$count
     total_items_count = seeded_client.get("/odata/v4/CostBenefitItems/$count")
     assert total_items_count.status_code == 200
-    assert int(total_items_count.text) == 18
+    assert int(total_items_count.text) == 24
 
     benefits_count = seeded_client.get(
         f"/odata/v4/Initiatives('{top_id}')/CostBenefitItems/$count",

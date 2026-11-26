@@ -4,6 +4,7 @@ import type {
   MeasureUpdate,
   MeasureValueIn,
   MeasureValueOut,
+  PairwiseSamples,
   CatalogDocContent,
   CatalogEntryUpdate,
   ApiKeyCreatedOut,
@@ -343,6 +344,9 @@ export const api = {
       `/api/initiatives/${encodeURIComponent(initiativeId)}/bcas/${encodeURIComponent(bcaId)}/measures/${encodeURIComponent(measureId)}`,
       { method: 'DELETE' }
     ),
+
+  getPairwiseSamples: (initiativeId: string, points = 300) =>
+    request<PairwiseSamples>(`/api/initiatives/${encodeURIComponent(initiativeId)}/pairwise-samples?points=${points}`),
 
   addItem: (initiativeId: string, payload: InitiativeItemCreate, bcaId?: string | null) => {
     const suffix = bcaId ? `?bca_id=${encodeURIComponent(bcaId)}` : '';

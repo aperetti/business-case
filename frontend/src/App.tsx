@@ -1322,7 +1322,7 @@ export default function App() {
                       onSelectComparison={(rec) => setActiveComparison(rec.summary)}
                       onOpenCreateBca={handleOpenCreateBca}
                     />
-                    <PairwisePlot bcas={bcas} measures={initiativeDetail.measures} />
+                    <PairwisePlot initiativeId={initiativeDetail.id} bcas={bcas} measures={initiativeDetail.measures} />
                   </Stack>
                 )}
               </KeepAlivePanel>

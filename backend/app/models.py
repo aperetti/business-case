@@ -507,6 +507,26 @@ class MeasureValueOut(BaseModel):
     updated_at: str
 
 
+class PairwiseCaseSamples(BaseModel):
+    """Joint Monte Carlo draws for one BCA (index i of every list is the same simulated future)."""
+
+    bca_id: str
+    npv: list[float]
+    bcr: list[float | None]
+    pv_benefits: list[float]
+    pv_costs: list[float]
+    payback: list[float | None]
+    measures: dict[str, list[float]] = Field(default_factory=dict)
+
+
+class PairwiseSamples(BaseModel):
+    """Monte Carlo draws for the pair-wise plot, one block per BCA."""
+
+    n_points: int
+    seed: int
+    cases: list[PairwiseCaseSamples]
+
+
 class BCACreate(BaseModel):
     """Payload to create or clone a Business Case Analysis (BCA) under an initiative."""
 

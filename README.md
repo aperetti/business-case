@@ -57,16 +57,17 @@ Not every benefit has a price. Under **Initiatives & Assumptions → Non-Monetar
 
 - Measures belong to the initiative, so every BCA is scored on the same list. Each BCA gets an expected value, plus an optional low–high range and a note on where the estimate came from.
 - Duplicating a BCA copies its estimates. Measures are locked along with the rest of the initiative while it is in review or approved.
+- Example: **Feeder 12F4 Capacity: Re-wire vs Residential Batteries (NWA)** compares a feeder re-wire (baseline) with a non-wires alternative of contracted Base Power home batteries. Both cases carry the same overload and reliability benefit lines (SAIDI valued with customer interruption costs), and SAIDI, headroom and time to relief are tracked as measures. Customer-experienced SAIDI counts battery-backed homes as served; reported IEEE 1366 SAIDI does not. Add it to an existing database with `python -c "from pathlib import Path; from app.db.database import seed_missing_demos, NWA_FEEDER_DEMO; print(seed_missing_demos(Path('<db path>'), names=[NWA_FEEDER_DEMO['name']]))"`.
 - API: `GET/POST /api/initiatives/{id}/measures`, `PATCH/DELETE /api/initiatives/{id}/measures/{measure_id}`, and `PUT/DELETE /api/initiatives/{id}/bcas/{bca_id}/measures/{measure_id}` for a BCA's estimate.
 
 ### Pair-wise plot
 
 The **Compare BCAs** tab has a **Pair-wise Measures** plot, a scatter-plot matrix with each business case as a category (colour and marker shape).
 
-- Each lower cell plots one measure against another. The diagonal shows a single measure across cases.
-- Pick which measures to include: NPV, BCR, PV benefits, PV costs, discounted payback, P(NPV > 0) once simulated, and any non-monetary measure.
-- Whiskers show the low–high ranges; for NPV that's the latest Monte Carlo P10–P90.
-- Click a case in the legend to hide it. Switch to **Table** for the same values as numbers.
+- **Monte Carlo** (default): each lower cell shows 300 simulated draws per case as a point cloud, one measure against another, with the case's median marked. The diagonal shows each case's distribution as a density curve. Financial results in one draw come from the same simulated future, so their joint spread is real. Non-monetary measures are drawn independently from a triangular (low, expected, high) distribution. The draws are run fresh for the plot (`GET /api/initiatives/{id}/pairwise-samples`) and not stored.
+- **Estimates**: one point per case at the deterministic value, with whiskers for the low–high range (for NPV, the latest Monte Carlo P10–P90). Only this view offers P(NPV > 0), which is a single number per case.
+- Pick which measures to include: NPV, BCR, PV benefits, PV costs, discounted payback and any non-monetary measure.
+- Click a case in the legend to hide it. Switch to **Table** for the numbers (P50 with P10–P90 in Monte Carlo view).
 
 ## Running the Application
 
